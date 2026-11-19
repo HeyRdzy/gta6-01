@@ -28,8 +28,22 @@ function rivalPerson(x, z) {
   );
   band.position.y = 2.3;
   person.rig.add(band);
+  // Health bar above the head: dark backing + a red bar that shrinks
+  // left-aligned as the rival takes hits. Sprites always face the camera,
+  // so the bar reads from any angle in the fight.
+  const bgMat = new THREE.SpriteMaterial({ color: 0x1a1a1a, depthWrite: false });
+  const barBg = new THREE.Sprite(bgMat);
+  barBg.scale.set(1.42, 0.22, 1);
+  barBg.position.set(0, 2.78, 0);
+  g.add(barBg);
+  const fgMat = new THREE.SpriteMaterial({ color: 0xff3b2e, depthWrite: false });
+  const barFg = new THREE.Sprite(fgMat);
+  barFg.center.set(0, 0.5);
+  barFg.scale.set(1.3, 0.14, 1);
+  barFg.position.set(-0.65, 2.78, 0);
+  g.add(barFg);
   g.position.set(x, 0, z);
-  return person;
+  return { person, barFg };
 }
 
 export class Combat {
@@ -64,9 +78,9 @@ export class Combat {
   spawnRivals(spots) {
     this.clearRivals();
     for (const [x, z] of spots) {
-      const person = rivalPerson(x, z);
+      const { person, barFg } = rivalPerson(x, z);
       this.scene.add(person.group);
-      this.rivals.push({ mesh: person.group, person, hp: RIVAL_HP, shootT: 1 + Math.random() });
+      this.rivals.push({ mesh: person.group, person, barFg, hp: RIVAL_HP, shootT: 1 + Math.random() });
     }
   }
 
@@ -163,6 +177,8 @@ export class Combat {
     });
     for (const r of this.rivals) {
       r.shootT -= dt;
+      // Health bar tracks the damage: full width at spawn, empty at death.
+      r.barFg.scale.x = 1.3 * clampNum(r.hp / RIVAL_HP, 0, 1);
       const d = flatDist(r.mesh.position.x, r.mesh.position.z, hero.x, hero.z);
       r.mesh.lookAt(hero.x, 0, hero.z);
       walkCycle(r.person, dt, 0); // rivals hold their ground, guns raised

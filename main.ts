@@ -1,11 +1,11 @@
-// Solmar Heat — gta6-01 entrypoint (Node 22, standard library only).
-// The game is a static Three.js open world under game/ — no build step,
-// no network at runtime, it opens straight from game/index.html.
-// This file only hands the entry in: it copies game/ and screenshots/
-// beside this file into the output directory, then writes dossier.json
-// there — the summary the make.fun judge reads — via the vendored library.
+// Solmar Heat — the gta6-01 entrypoint (Node 22, standard library only).
+// The game itself is static: a Three.js open world under game/, vendored
+// so it runs with no build step and no network at runtime. All this file
+// does is hand the entry over — it copies game/ and screenshots/ next to
+// this file into the output folder, then asks the vendored library to
+// write dossier.json there, the summary the make.fun judge reads.
 //
-// Play it locally first with `node serve.ts` (http://localhost:8080), then:
+// Try it first with `node serve.ts` (http://localhost:8080), then build:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -16,7 +16,8 @@ import { buildDossier } from './vendor/makefun-game.ts';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const dest = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-// No entry page, no game for the grader to open — fail loudly instead.
+// Without the entry page there is nothing for the grader to open,
+// so refuse to build instead of shipping an empty folder.
 if (!existsSync(join(here, 'game', 'index.html'))) {
   throw new Error('Solmar Heat is missing game/index.html');
 }
@@ -28,8 +29,8 @@ if (existsSync(join(here, 'screenshots'))) {
   cpSync(join(here, 'screenshots'), join(dest, 'screenshots'), { recursive: true });
 }
 
-// Kit gate caps: at most 4 screenshots of 256 KiB each, game/ under
-// 993 files and 48 MiB, and the dossier itself under 160 KiB of text.
+// Kit limits: at most 4 screenshots of 256 KiB each, game/ under 993
+// files and 48 MiB, and the dossier text itself under 160 KiB.
 writeFileSync(
   join(dest, 'dossier.json'),
   buildDossier(dest, {

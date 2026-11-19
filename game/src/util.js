@@ -28,6 +28,15 @@ export function clampNum(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 /** Linear interpolation between a and b. */
 export function lerpNum(a, b, t) { return a + (b - a) * t; }
 
+/** Clamp v into [0, 1]. */
+export function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+/** Smoothstep between edges a and b: eases in and out, 0 below a, 1 above b. */
+export function smoothstepNum(a, b, t) {
+  const x = clamp01((t - a) / (b - a));
+  return x * x * (3 - 2 * x);
+}
+
 /** Ease-out cubic: fast start, gentle landing — for camera and UI moves. */
 export function easeOutCubic(t) { return 1 - Math.pow(1 - clampNum(t, 0, 1), 3); }
 
@@ -53,6 +62,11 @@ export function turnToward(a, target, maxStep) {
   const d = wrapAngle(target - a);
   if (Math.abs(d) <= maxStep) return target;
   return a + Math.sign(d) * maxStep;
+}
+
+/** Ease one angle toward another along the short way, by fraction t. */
+export function angleLerp(a, target, t) {
+  return a + wrapAngle(target - a) * clampNum(t, 0, 1);
 }
 
 /** Flat distance between two {x, z} points. */

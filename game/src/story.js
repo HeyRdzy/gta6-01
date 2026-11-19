@@ -85,10 +85,13 @@ export class Story {
     this.stuntCooldown = 0;
     this._glowTex = glowTexture('rgba(255,194,59,0.9)', 'rgba(255,194,59,0)');
 
-    // Gold waypoint beacon: a pulsing column with a halo at its foot.
+    // Gold waypoint beacon: a slim pulsing column with a halo at its
+    // foot. Slim on purpose — a fat column reads as a wall in screenshots.
+    // It hides entirely on kill steps, where there is no waypoint and a
+    // column at Rio's feet would only block the fight.
     this.beacon = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.6, 1.6, 26, 12, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffc23b, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.CylinderGeometry(1.05, 1.05, 26, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffc23b, transparent: true, opacity: 0.24, side: THREE.DoubleSide, depthWrite: false }),
     );
     this.beacon.visible = false;
     scene.add(this.beacon);
@@ -141,10 +144,10 @@ export class Story {
       this.ramps.push({ x: 112, z, usedAt: -99 });
     }
 
-    // Taxi fare marker.
+    // Taxi fare marker: slim like the beacon, green instead of gold.
     this.fareMark = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.2, 1.2, 14, 10, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x2ee6a8, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.CylinderGeometry(0.9, 0.9, 14, 10, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x2ee6a8, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }),
     );
     this.fareMark.visible = false;
     scene.add(this.fareMark);
@@ -234,9 +237,13 @@ export class Story {
 
   update(dt, hero, now, events) {
     // Waypoint beacon follows the current step, pulsing as it goes.
+    // Kill steps have no waypoint: the beacon stays hidden so the fight
+    // reads clean, and the ring parks out of sight too.
     const wp = this.waypoint();
-    const pulse = 0.3 + Math.sin(now * 3) * 0.12;
-    if (wp) {
+    const pulse = 0.2 + Math.sin(now * 3) * 0.08;
+    const killStep = this.active && this.active.def.steps[this.stepIndex]
+      && this.active.def.steps[this.stepIndex].kind === 'kill';
+    if (wp && !killStep) {
       this.beacon.visible = true;
       this.beaconHalo.visible = true;
       this.ring.visible = true;
@@ -247,14 +254,20 @@ export class Story {
       const rs = 1 + Math.sin(now * 2) * 0.12;
       this.ring.scale.set(rs, rs, 1);
     } else {
-      this.beacon.visible = !!this.active;
-      this.beaconHalo.visible = !!this.active;
+      this.beacon.visible = !!this.active && !killStep;
+      this.beaconHalo.visible = !!this.active && !killStep;
       this.ring.visible = false;
-      if (this.active) {
+      if (this.active && !killStep) {
         this.beacon.material.opacity = pulse;
         this.beacon.position.set(hero.x, 13, hero.z);
         this.beaconHalo.position.set(hero.x, 2, hero.z);
       }
+    }
+
+    // Package crates bob gently so they catch the eye at dusk.
+    for (let i = 0; i < this.packages.length; i++) {
+      const p = this.packages[i];
+      if (p.mesh.visible) p.mesh.position.y = 0.9 + Math.sin(now * 2 + i * 1.3) * 0.15;
     }
 
     if (this.active) {

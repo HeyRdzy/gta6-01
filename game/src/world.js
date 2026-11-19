@@ -55,7 +55,9 @@ export function buildBay(scene) {
 
   const sky = makeSky(scene);
   const rig = makeLightRig(scene);
-  scene.fog = new THREE.Fog(0xe08a5a, 150, 560);
+  // Warm-neutral haze, kept thin so the skyline holds its shape instead
+  // of drowning in red at golden hour.
+  scene.fog = new THREE.Fog(0xd9986e, 170, 720);
 
   const glowTex = glowTexture();
   const crossTex = crosswalkTexture();
@@ -63,7 +65,7 @@ export function buildBay(scene) {
   // --- ground: asphalt, sand, animated sea ------------------------------
   const ground = new THREE.Mesh(
     sharedGeo('ground', () => new THREE.PlaneGeometry(BAY_HALF * 2 + 160, BAY_HALF * 2)),
-    stdMat(0x35322e, 0.95),
+    stdMat(0x3d3833, 0.95),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.x = 40;
@@ -216,12 +218,23 @@ export function buildBay(scene) {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * 0.3125), mat);
     return m;
   }
+  // Landmarks wear a textured face now — windows and a cornice band —
+  // so the diner, bank, marina and PD read as buildings, not flat slabs.
   function landmark(x, z, w, d, h, color, label, neonColor) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), stdMat(color, 0.9));
+    const faceTex = facadeTexture(rng, '#' + color.toString(16).padStart(6, '0'), 0.42);
+    const faceMat = new THREE.MeshStandardMaterial({
+      map: faceTex, emissiveMap: faceTex, emissive: 0xffffff,
+      emissiveIntensity: 0.3, roughness: 0.9,
+    });
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), faceMat);
     m.position.set(x, h / 2, z);
     m.castShadow = true;
     m.receiveShadow = true;
     group.add(m);
+    // Pale cornice band along the top edge so the roofline reads at dusk.
+    const cornice = new THREE.Mesh(new THREE.BoxGeometry(w + 0.8, 0.9, d + 0.8), stdMat(0xe8e2d2, 0.85));
+    cornice.position.set(x, h + 0.2, z);
+    group.add(cornice);
     colliders.push({ x0: x - w / 2 - 1, z0: z - d / 2 - 1, x1: x + w / 2 + 1, z1: z + d / 2 + 1 });
     const sign = neonSign(label, neonColor, Math.min(w * 0.9, 26));
     sign.position.set(x, h + 2.6, z + d / 2 + 0.5);
@@ -278,25 +291,27 @@ export function buildBay(scene) {
   }
 
   // --- palms and park trees --------------------------------------------------
-  const trunkMat = stdMat(0x7a5a38, 1);
+  const trunkMat = stdMat(0x8a6a48, 1);
   const frondTex = frondTexture();
   const frondMat = new THREE.MeshStandardMaterial({ map: frondTex, transparent: true, alphaTest: 0.35, side: THREE.DoubleSide, roughness: 0.9 });
   const leafMat = stdMat(0x2f7a3a, 1);
   function palm(x, z) {
     const g = new THREE.Group();
-    let px = 0;
+    // One smooth tapered trunk with a gentle lean — the old stacked
+    // segments read as a pile of boxes from the side.
+    const trunk = new THREE.Mesh(sharedGeo('palmTrunk', () => new THREE.CylinderGeometry(0.3, 0.55, 9.6, 8)), trunkMat);
+    trunk.position.set(0.9, 4.8, 0);
+    trunk.rotation.z = -0.18;
+    trunk.castShadow = true;
+    g.add(trunk);
+    // Three crown layers at different droops so the palm reads as a
+    // crown from any angle, not a flat star.
+    const droops = [-Math.PI / 2 + 0.85, -Math.PI / 2 + 0.45, -Math.PI / 2 + 0.15];
     for (let i = 0; i < 3; i++) {
-      const seg = new THREE.Mesh(sharedGeo('palmSeg', () => new THREE.CylinderGeometry(0.42, 0.62, 3.2, 7)), trunkMat);
-      seg.position.set(px, 1.6 + i * 3, 0);
-      seg.rotation.z = 0.1 * (i + 1);
-      px += 0.32 * (i + 1);
-      g.add(seg);
-    }
-    for (let i = 0; i < 2; i++) {
-      const frond = new THREE.Mesh(sharedGeo('frond', () => new THREE.PlaneGeometry(7, 7)), frondMat);
-      frond.position.set(px, 9.6, 0);
-      frond.rotation.x = -Math.PI / 2 + 0.5;
-      frond.rotation.z = (i / 2) * Math.PI;
+      const frond = new THREE.Mesh(sharedGeo('frond', () => new THREE.PlaneGeometry(8.5, 8.5)), frondMat);
+      frond.position.set(1.8, 9.4 - i * 0.35, 0);
+      frond.rotation.x = droops[i];
+      frond.rotation.z = (i / 3) * Math.PI * 2;
       g.add(frond);
     }
     g.position.set(x, 0, z);
@@ -409,14 +424,14 @@ export function buildBay(scene) {
     });
   }
 
-  // --- dusk cycle ------------------------------------------------------------
+  // --- dusk cycle: warm but never blood-red; the night stops stay blue.
   const skyStops = [
-    { t: 0.0, top: 0x274a7d, mid: 0xff9a4d, bot: 0x4a2430, sun: 0xffc07a, fog: 0xe08a5a, sunI: 2.6, hemiI: 0.85, lamp: 0.25, win: 0.35 },
-    { t: 0.12, top: 0x2a3a6a, mid: 0xff7a4d, bot: 0x3a1a2a, sun: 0xff8a4d, fog: 0xd06a55, sunI: 2.1, hemiI: 0.7, lamp: 0.5, win: 0.6 },
-    { t: 0.35, top: 0x1a2448, mid: 0xc95a6a, bot: 0x241426, sun: 0xff6a5a, fog: 0x9a5560, sunI: 1.2, hemiI: 0.5, lamp: 0.85, win: 0.9 },
+    { t: 0.0, top: 0x3a5a9e, mid: 0xffcf9e, bot: 0x54283a, sun: 0xffc07a, fog: 0xd9986e, sunI: 2.7, hemiI: 1.05, lamp: 0.25, win: 0.4 },
+    { t: 0.12, top: 0x35508a, mid: 0xffab7d, bot: 0x452030, sun: 0xff8a4d, fog: 0xc07a62, sunI: 2.2, hemiI: 0.9, lamp: 0.5, win: 0.6 },
+    { t: 0.35, top: 0x1e2a52, mid: 0xb86a72, bot: 0x2a1628, sun: 0xff6a5a, fog: 0x9a5f66, sunI: 1.3, hemiI: 0.6, lamp: 0.85, win: 0.9 },
     { t: 0.6, top: 0x0e1430, mid: 0x2a2a55, bot: 0x120e22, sun: 0x6a7ab0, fog: 0x23233e, sunI: 0.55, hemiI: 0.32, lamp: 1.0, win: 1.0 },
     { t: 0.85, top: 0x141c3c, mid: 0x3a3a5e, bot: 0x181228, sun: 0x8a8ac0, fog: 0x2c2c48, sunI: 0.8, hemiI: 0.42, lamp: 0.9, win: 0.85 },
-    { t: 1.0, top: 0x274a7d, mid: 0xff9a4d, bot: 0x4a2430, sun: 0xffc07a, fog: 0xe08a5a, sunI: 2.6, hemiI: 0.85, lamp: 0.25, win: 0.35 },
+    { t: 1.0, top: 0x3a5a9e, mid: 0xffab60, bot: 0x54283a, sun: 0xffc07a, fog: 0xd9986e, sunI: 2.7, hemiI: 1.05, lamp: 0.25, win: 0.4 },
   ];
   const tmpA = new THREE.Color(), tmpB = new THREE.Color();
   function updateSky(dayT) {
@@ -440,6 +455,9 @@ export function buildBay(scene) {
     rig.sun.color.setHex(a.sun).lerp(tmpB.setHex(b.sun), f);
     rig.sun.intensity = a.sunI + (b.sunI - a.sunI) * f;
     rig.hemi.intensity = a.hemiI + (b.hemiI - a.hemiI) * f;
+    // The east fill stays steady through the cycle: shadow faces must
+    // stay readable even as the key sun drops.
+    rig.fill.intensity = 0.5;
     scene.fog.color.setHex(a.fog).lerp(tmpB.setHex(b.fog), f);
     const lampI = a.lamp + (b.lamp - a.lamp) * f;
     lampBulbs.forEach((m) => { m.color.setHex(0xffe9a8); });

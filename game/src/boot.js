@@ -18,11 +18,11 @@ import { Display } from './display.js';
 import { BaySound } from './sound.js';
 import { Pad } from './controls.js';
 import { stageShot } from './stage.js';
-import { flatDist, clampNum, lerpNum } from './util.js';
+import { flatDist, clampNum, lerpNum, smoothstepNum } from './util.js';
 import { makeRenderer, glowTexture } from './visuals.js';
 
 const canvas = document.getElementById('game');
-const renderer = makeRenderer(canvas);
+const renderer = makeRenderer(canvas, 1.75);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1400);
 
@@ -46,6 +46,7 @@ const events = {
 let mode = 'title'; // title | play | pause | dead
 let fixedPose = null;
 let saveT = 0;
+let tuneT = 0;
 let trauma = 0;
 let fov = 62;
 let shotFrames = 0;
@@ -201,6 +202,20 @@ function frame() {
   trauma = Math.max(0, trauma - dt * 1.6);
   pad.smooth(dt);
 
+  // Quality auto-tune: watch the real frame cost and drop the pixel
+  // cap a notch when the machine struggles, before the frame rate does.
+  state.noteFrame(dt * 1000);
+  tuneT += dt;
+  if (tuneT > 4) {
+    tuneT = 0;
+    const cap = state.pixelCapFor();
+    if (cap !== state.pixelCap) {
+      state.pixelCap = cap;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+  }
+
   if (mode === 'play') {
     state.tickClock(dt);
     const skyInfo = bay.updateSky(state.dayT);
@@ -326,9 +341,9 @@ function frame() {
     camera.lookAt(fixedPose.lookAt);
   } else if (mode === 'title') {
     const a = elapsed * 0.045;
-    const want = new THREE.Vector3(-52 + Math.sin(a) * 26, 26 + Math.sin(a * 0.7) * 4, 148 - Math.cos(a) * 10);
+    const want = new THREE.Vector3(-52 + Math.sin(a) * 30, 30 + Math.sin(a * 0.7) * 4, 148 - Math.cos(a) * 14);
     camPos.lerp(want, damp);
-    camLook.lerp(new THREE.Vector3(42, 8, -52), damp);
+    camLook.lerp(new THREE.Vector3(42, 12, -52), damp);
     camera.position.copy(camPos);
     camera.lookAt(camLook);
   } else if (hero.driving) {
@@ -342,7 +357,9 @@ function frame() {
     camLook.lerp(new THREE.Vector3(car.mesh.position.x + fx * 9, 1.6, car.mesh.position.z + fz * 9), damp);
     camera.position.copy(camPos);
     camera.lookAt(camLook);
-    const targetFov = 62 + clampNum(Math.abs(hero.speed) / 38, 0, 1) * 9;
+    // Lean the camera into the drift: the frame rolls with the tail.
+    camera.rotation.z += -hero.drift * 0.05;
+    const targetFov = 62 + smoothstepNum(0, 1, Math.abs(hero.speed) / 38) * 9;
     fov = lerpNum(fov, targetFov, Math.min(1, dt * 3));
   } else {
     const yaw = pad.yaw;

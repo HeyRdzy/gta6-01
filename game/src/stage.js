@@ -36,7 +36,8 @@ export function stageShot(name, game) {
     hero.teleport(2, 84, Math.PI * 0.95);
     const car = street.cars[0];
     if (car) {
-      car.mesh.position.set(9, 0, 92);
+      // Parked off to the side so the car never hides Rio from the camera.
+      car.mesh.position.set(13, 0, 96);
       car.mesh.rotation.y = Math.PI / 2;
       car.heading = Math.PI / 2;
     }
@@ -49,7 +50,9 @@ export function stageShot(name, game) {
     story.startNext(events);
     display.showPlay();
     display.say('Mara Voss: Pick up the parcel at Rosa\u2019s Diner — and don\u2019t be late.', 8);
-    return pose(7, 8.5, 110, 0, 1.5, 80);
+    // Closer and lower than v3: Rio fills the frame, the diner sign and
+    // the crosswalk traffic sit behind him instead of swallowing him.
+    return pose(6, 6.2, 99, 0, 1.5, 80);
   }
 
   if (name === 'chase') {
@@ -62,6 +65,14 @@ export function stageShot(name, game) {
       hero.takeCar(car);
       hero.speed = 26;
     }
+    // A traffic car ahead gives the chase depth instead of an empty road.
+    const ahead = street.cars[2];
+    if (ahead && ahead !== car) {
+      ahead.mesh.position.set(3, 0, 44);
+      ahead.mesh.rotation.y = Math.PI;
+      ahead.heading = Math.PI;
+      ahead.speed = 9;
+    }
     state.addHeat(50);
     cops.update(0.016, hero, performance.now() / 1000, {});
     const spots = [[-4, 100], [4, 106], [0, 112]];
@@ -73,7 +84,7 @@ export function stageShot(name, game) {
     });
     display.showPlay();
     display.say('WANTED — lose the cops!', 6);
-    return pose(-7, 5.5, 102, 0, 1.5, 66);
+    return pose(-7, 6.5, 104, 0, 1.5, 60);
   }
 
   if (name === 'mission') {
@@ -81,19 +92,22 @@ export function stageShot(name, game) {
     story.startNext(events);
     story.stepIndex = 1;
     story._enterStep(events);
-    // Restage the fight in the open dock yard: Rio on the pier road facing
-    // west, rivals in a loose line ahead of him, the gold beacon rising
-    // behind him. The camera comes in low from the south-east over the
-    // beach, so the marina office can never sit between it and the action.
+    // Restaged for v3.1: the fight stays on the open dock road, but the
+    // camera now comes in from the beach side, low and to the east, so
+    // the marina office and the dock houses can never sit between it and
+    // the action — open sand and sea behind the lens, rivals in a loose
+    // line ahead of Rio, beacon hidden for the kill step.
     combat.clearRivals();
     combat.spawnRivals([[100, -88], [108, -80], [102, -96], [116, -90]]);
-    hero.teleport(122, -84, -Math.PI / 2);
+    hero.teleport(124, -84, -Math.PI / 2);
     state.cash = 3120;
     state.clockMin = 17 * 60 + 55;
     state.dayT = 0.1;
     display.showPlay();
     display.say('Mara Voss: The Kestrel crew is waiting at the docks. Clear them out.', 8);
-    return pose(141, 5.5, -72, 100, 1.5, -88);
+    // Closer and lower than v3: Rio and the rivals fill the frame, the
+    // beach sand drops out of the bottom third.
+    return pose(140, 5.0, -70, 106, 1.5, -87);
   }
 
   // start: title screen over a golden-hour vista — downtown towers left,

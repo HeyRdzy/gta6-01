@@ -17,14 +17,18 @@ const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0
 const tireMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95 });
 const hubMat = new THREE.MeshStandardMaterial({ color: 0xc8ccd2, roughness: 0.3, metalness: 0.85 });
 const coneMat = new THREE.MeshBasicMaterial({
-  color: 0xffe9a8, transparent: true, opacity: 0.10,
+  color: 0xffe9a8, transparent: true, opacity: 0.13,
   blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
 });
 
 /** Build a detailed car. Returns the group plus the parts animators need. */
 export function buildCar(color, x, z, heading) {
   const g = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.32, metalness: 0.55 });
+  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.65 });
+  // Two-tone roof: a darker shade of the paint, like a factory option.
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color).multiplyScalar(0.55), roughness: 0.3, metalness: 0.6,
+  });
   // Sculpted body: low slab, hood and trunk shoulders, glass cabin.
   const slab = new THREE.Mesh(sharedGeo('carSlab', () => new THREE.BoxGeometry(2.05, 0.55, 4.5)), paint);
   slab.position.y = 0.62;
@@ -41,7 +45,7 @@ export function buildCar(color, x, z, heading) {
   cabin.position.set(0, 1.28, -0.15);
   cabin.castShadow = true;
   g.add(cabin);
-  const roof = new THREE.Mesh(sharedGeo('carRoof', () => new THREE.BoxGeometry(1.7, 0.1, 1.9)), paint);
+  const roof = new THREE.Mesh(sharedGeo('carRoof', () => new THREE.BoxGeometry(1.7, 0.1, 1.9)), roofMat);
   roof.position.set(0, 1.62, -0.15);
   g.add(roof);
   // Chrome grille, bumpers and side trim.
@@ -199,6 +203,8 @@ export class StreetLife {
       );
       const x = span(this.rng, -120, 110), z = span(this.rng, -120, 120);
       person.group.position.set(x, 0, z);
+      // Height variety so the crowd stops looking cloned.
+      person.group.scale.setScalar(span(this.rng, 0.92, 1.08));
       scene.add(person.group);
       this.peds.push({
         mesh: person.group, person, heading: this.rng() * Math.PI * 2,

@@ -39,8 +39,23 @@ export class BayState {
     this.muted = false;
     this.startedAt = Date.now();
     // Visual quality: capped pixel ratio and shadows keep 60 fps in reach.
+    // The frame-time average below drives the auto-tune in noteFrame().
     this.pixelCap = 1.75;
     this.shadows = true;
+    this.frameMs = 16;
+  }
+
+  /** Feed each frame's cost in milliseconds; the average steers quality. */
+  noteFrame(ms) {
+    this.frameMs = this.frameMs * 0.95 + Math.min(ms, 100) * 0.05;
+  }
+
+  /** Pixel-ratio cap for the current load: 1.75 when smooth, lower when
+   *  the machine struggles, so the frame rate holds before the looks go. */
+  pixelCapFor() {
+    if (this.frameMs > 28) return 1.0;
+    if (this.frameMs > 20) return 1.25;
+    return 1.75;
   }
 
   stars() { return heatToStars(this.heat); }

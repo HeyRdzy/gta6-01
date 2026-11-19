@@ -4,12 +4,12 @@
 // smokes in thick puffs until Rio is forced out.
 
 import * as THREE from 'three';
-import { clampNum, pushOut, turnToward, lerpNum } from './util.js';
+import { clampNum, clamp01, pushOut, turnToward, lerpNum } from './util.js';
 import { buildPerson, walkCycle } from './traffic.js';
 import { glowTexture } from './visuals.js';
 
 const WALK = 6, RUN = 10.5, JUMP_V = 8.5, GRAV = 22;
-const ACCEL = 26, TOP = 38, REVERSE_TOP = 11, STEER_RATE = 2.0;
+const ACCEL = 26, TOP = 38, REVERSE_TOP = 11, STEER_RATE = 2.15;
 
 export class Hero {
   constructor(scene, colliders, state) {
@@ -31,6 +31,10 @@ export class Hero {
     this.vy = 0;
     this.grounded = true;
     this.speed = 0;
+    // On-foot velocity: Rio accelerates into a run and eases out of it
+    // instead of snapping to top speed the frame a key goes down.
+    this.vx = 0;
+    this.vz = 0;
     this.driving = null;
     this.drift = 0; // lateral slide, -1..1, builds in hard fast turns
     this.smokePuffs = [];
@@ -43,6 +47,8 @@ export class Hero {
     this.heading = heading;
     this.vy = 0;
     this.speed = 0;
+    this.vx = 0;
+    this.vz = 0;
     this.drift = 0;
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = heading;
@@ -69,6 +75,8 @@ export class Hero {
     car.braking = false;
     this.driving = null;
     this.speed = 0;
+    this.vx = 0;
+    this.vz = 0;
     this.drift = 0;
     this.pos.set(car.mesh.position.x + 3, 0, car.mesh.position.z + 3);
     this.mesh.visible = true;
@@ -113,7 +121,9 @@ export class Hero {
       }
       puff.visible = true;
       puff.material.opacity = 0.75;
-      const s = 2 + (car.damage - 60) / 40 * 2.5;
+      // Puffs grow with the damage, capped so a wrecked car does not
+      // throw a smoke ball bigger than the car itself.
+      const s = 2 + clamp01((car.damage - 60) / 40) * 2.5;
       puff.scale.set(s, s, 1);
       puff.position.set(car.mesh.position.x, 2.4, car.mesh.position.z);
       puff.userData.life = 0.9;
@@ -170,6 +180,8 @@ export class Hero {
         car.mesh.position.z = clampNum(nz, -148, 148);
       }
       car.mesh.rotation.y = car.heading;
+      // Body roll: the car leans into a drift so the slide reads on screen.
+      car.mesh.rotation.z = -this.drift * 0.1;
       // Wheels roll; the front pair steers visually.
       const spin = this.speed * dt / 0.44;
       car.parts.wheels.forEach((w, i) => {
@@ -198,11 +210,21 @@ export class Hero {
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
       const rx = -fz, rz = fx;
       const mx = fx * -sz + rx * sx, mz = fz * -sz + rz * sx;
-      const solved = this._collide(this.pos.x + mx * top * dt, this.pos.z + mz * top * dt, 0.8);
+      // Ease the velocity toward the target instead of teleporting to
+      // full speed: snappy to start, gentle to stop.
+      const rate = 14;
+      this.vx = lerpNum(this.vx, mx * top, Math.min(1, dt * rate));
+      this.vz = lerpNum(this.vz, mz * top, Math.min(1, dt * rate));
+      const solved = this._collide(this.pos.x + this.vx * dt, this.pos.z + this.vz * dt, 0.8);
       this.pos.x = solved.x; this.pos.z = solved.z;
-      this.heading = turnToward(this.heading, Math.atan2(mx, mz), 10 * dt);
-      walkCycle(this.person, dt, top);
+      this.heading = turnToward(this.heading, Math.atan2(this.vx, this.vz), 10 * dt);
+      walkCycle(this.person, dt, Math.hypot(this.vx, this.vz));
     } else {
+      // No input: bleed speed off instead of stopping dead.
+      this.vx = lerpNum(this.vx, 0, Math.min(1, dt * 11));
+      this.vz = lerpNum(this.vz, 0, Math.min(1, dt * 11));
+      const solved = this._collide(this.pos.x + this.vx * dt, this.pos.z + this.vz * dt, 0.8);
+      this.pos.x = solved.x; this.pos.z = solved.z;
       walkCycle(this.person, dt, 0);
     }
     if (pad.hit('Space') && this.grounded) {

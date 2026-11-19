@@ -15,6 +15,10 @@ export class BaySound {
     this.sirenGain = null;
     this.sirenHigh = false;
     this.sirenT = 0;
+    // Ambience: surf and wind on a loop, barely audible, so the bay
+    // never sounds dead between engine notes.
+    this.ambGain = null;
+    this.ambLfo = null;
   }
 
   unlock() {
@@ -25,7 +29,33 @@ export class BaySound {
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AC();
+      this.startAmbience();
     } catch (e) { this.ctx = null; }
+  }
+
+  /** Looped filtered noise as surf + wind, swelling slowly with an LFO. */
+  startAmbience() {
+    if (!this.ctx || this.ambGain) return;
+    try {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this._noiseBuffer(3);
+      src.loop = true;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = 420;
+      this.ambGain = this.ctx.createGain();
+      this.ambGain.gain.value = this.muted ? 0 : 0.035;
+      // A slow swell, about one wave every 11 seconds.
+      this.ambLfo = this.ctx.createOscillator();
+      this.ambLfo.type = 'sine';
+      this.ambLfo.frequency.value = 0.09;
+      const lfoGain = this.ctx.createGain();
+      lfoGain.gain.value = 0.018;
+      this.ambLfo.connect(lfoGain);
+      lfoGain.connect(this.ambGain.gain);
+      src.connect(f); f.connect(this.ambGain); this.ambGain.connect(this.ctx.destination);
+      src.start();
+      this.ambLfo.start();
+    } catch (e) { /* ambience is optional */ }
   }
 
   _noiseBuffer(seconds) {
@@ -158,6 +188,11 @@ export class BaySound {
 
   setMuted(m) {
     this.muted = m;
-    if (m) { this.engineOff(); this.sirenOff(); }
+    if (m) {
+      this.engineOff(); this.sirenOff();
+      if (this.ambGain) this.ambGain.gain.value = 0;
+    } else if (this.ambGain) {
+      this.ambGain.gain.value = 0.035;
+    }
   }
 }

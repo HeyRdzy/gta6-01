@@ -16,6 +16,12 @@ export class Pad {
     this._targetPitch = 0.32;
     this.locked = false;
     this.shots = 0; // mouse clicks waiting to fire
+    // Drag-to-look fallback: when the browser refuses pointer lock (some
+    // embedded or headless views), a held mouse drag still steers the
+    // camera instead of leaving the player stuck.
+    this._dragging = false;
+    this._dragX = 0;
+    this._dragY = 0;
     this._onKeyDown = (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
@@ -30,7 +36,31 @@ export class Pad {
       if (this._targetPitch < -0.5) this._targetPitch = -0.5;
       if (this._targetPitch > 1.1) this._targetPitch = 1.1;
     };
-    this._onClick = () => { this.shots++; };
+    this._onDragStart = (e) => {
+      if (this.locked) return;
+      this._dragging = true;
+      this._dragMoved = 0;
+      this._dragX = e.clientX;
+      this._dragY = e.clientY;
+    };
+    this._onDrag = (e) => {
+      if (!this._dragging || this.locked) return;
+      const dx = e.clientX - this._dragX, dy = e.clientY - this._dragY;
+      this._dragMoved += Math.abs(dx) + Math.abs(dy);
+      this._targetYaw -= dx * 0.0026;
+      this._targetPitch += dy * 0.0022;
+      if (this._targetPitch < -0.5) this._targetPitch = -0.5;
+      if (this._targetPitch > 1.1) this._targetPitch = 1.1;
+      this._dragX = e.clientX;
+      this._dragY = e.clientY;
+    };
+    // A press only counts as a weapon click if it barely moved — a
+    // drag-to-look must never fire the gun.
+    this._onDragEnd = () => {
+      if (this._dragging && this._dragMoved < 6 && !this.locked) this.shots++;
+      this._dragging = false;
+    };
+    this._onClick = () => { if (this.locked) this.shots++; };
     this._onLock = () => { this.locked = document.pointerLockElement === this.canvas; };
   }
 
@@ -39,6 +69,9 @@ export class Pad {
     window.addEventListener('keyup', this._onKeyUp);
     window.addEventListener('mousemove', this._onMouse);
     this.canvas.addEventListener('mousedown', this._onClick);
+    this.canvas.addEventListener('mousedown', this._onDragStart);
+    window.addEventListener('mousemove', this._onDrag);
+    window.addEventListener('mouseup', this._onDragEnd);
     document.addEventListener('pointerlockchange', this._onLock);
   }
 
@@ -47,6 +80,9 @@ export class Pad {
     window.removeEventListener('keyup', this._onKeyUp);
     window.removeEventListener('mousemove', this._onMouse);
     this.canvas.removeEventListener('mousedown', this._onClick);
+    this.canvas.removeEventListener('mousedown', this._onDragStart);
+    window.removeEventListener('mousemove', this._onDrag);
+    window.removeEventListener('mouseup', this._onDragEnd);
     document.removeEventListener('pointerlockchange', this._onLock);
   }
 

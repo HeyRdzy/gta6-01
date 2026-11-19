@@ -9,9 +9,35 @@ import { buildCar } from './traffic.js';
 import { heatToStars } from './state.js';
 import { glowTexture, stdMat, sharedGeo } from './visuals.js';
 
+/** Diagonal black-and-yellow hazard stripes for the roadblock barrier. */
+function stripeTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 32;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffc23b';
+  g.fillRect(0, 0, 256, 32);
+  g.fillStyle = '#141414';
+  for (let x = -32; x < 288; x += 64) {
+    g.beginPath();
+    g.moveTo(x, 32);
+    g.lineTo(x + 32, 0);
+    g.lineTo(x + 64, 0);
+    g.lineTo(x + 32, 32);
+    g.closePath();
+    g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  return t;
+}
+
 function cruiserMesh(x, z, heading) {
   const built = buildCar(0x14181f, x, z, heading);
   const g = built.group;
+  // Push-bar on the nose: the classic cruiser ram bar.
+  const pushBar = new THREE.Mesh(sharedGeo('pdPush', () => new THREE.BoxGeometry(1.6, 0.32, 0.14)), stdMat(0x111111, 0.5, 0.5));
+  pushBar.position.set(0, 0.55, 2.32);
+  g.add(pushBar);
   // White doors and hood: the classic black-and-white.
   const doorMat = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.4, metalness: 0.4 });
   for (const sx of [-1.03, 1.03]) {
@@ -39,7 +65,13 @@ function cruiserMesh(x, z, heading) {
   halo.scale.set(4.5, 4.5, 1);
   halo.position.set(0, 2.1, -0.15);
   g.add(halo);
-  return { group: g, bar, bar2, halo, parts: built };
+  // Rear glow: in a chase the camera sits behind the cruiser, so a second
+  // halo at the tail keeps the light bar visible from the player's view.
+  const haloRear = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true, opacity: 0.55, depthWrite: false }));
+  haloRear.scale.set(3.6, 3.6, 1);
+  haloRear.position.set(0, 1.9, -2.5);
+  g.add(haloRear);
+  return { group: g, bar, bar2, halo, haloRear, parts: built };
 }
 
 export class Cops {
@@ -66,7 +98,7 @@ export class Cops {
   _spawnCruiser(x, z) {
     const built = cruiserMesh(x, z, 0);
     this.scene.add(built.group);
-    const c = { mesh: built.group, heading: 0, speed: 0, bar: built.bar, bar2: built.bar2, halo: built.halo, parts: built.parts };
+    const c = { mesh: built.group, heading: 0, speed: 0, bar: built.bar, bar2: built.bar2, halo: built.halo, haloRear: built.haloRear, parts: built.parts };
     this.cars.push(c);
     return c;
   }
@@ -79,11 +111,11 @@ export class Cops {
     [[-4, 0], [4, 0]].forEach(([off]) => {
       const built = cruiserMesh(px + ax - fz * off, pz + az + fx * off, heading + Math.PI / 2);
       this.scene.add(built.group);
-      this.blocks.push({ mesh: built.group, bar: built.bar, bar2: built.bar2, halo: built.halo });
+      this.blocks.push({ mesh: built.group, bar: built.bar, bar2: built.bar2, halo: built.halo, haloRear: built.haloRear });
     });
     const stripe = new THREE.Mesh(
       sharedGeo('barrier', () => new THREE.BoxGeometry(9, 1, 0.4)),
-      new THREE.MeshStandardMaterial({ color: 0xffc23b, roughness: 0.7 }),
+      new THREE.MeshStandardMaterial({ map: stripeTexture(), roughness: 0.7 }),
     );
     stripe.position.set(px + ax, 1, pz + az);
     stripe.rotation.y = heading + Math.PI / 2;
@@ -120,6 +152,10 @@ export class Cops {
       if (c.halo) {
         c.halo.material.opacity = red ? 0.75 : 0.4;
         c.halo.material.color.setHex(red ? 0xff2a2a : 0x2a6aff);
+      }
+      if (c.haloRear) {
+        c.haloRear.material.opacity = red ? 0.6 : 0.3;
+        c.haloRear.material.color.setHex(red ? 0xff2a2a : 0x2a6aff);
       }
     }
 
