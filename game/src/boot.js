@@ -371,9 +371,12 @@ function frame() {
   renderer.render(scene, camera);
 
   if (shotName) {
+    // Shot mode uses a fixed camera pose, so the scene is settled from the
+    // first frame — a handful of rendered frames is enough to call it ready.
     shotFrames++;
-    if (shotFrames >= 25 && !window.__shotReady) window.__shotReady = true;
+    if (shotFrames >= 6 && !window.__shotReady) window.__shotReady = true;
   }
+  window.__frameCount = (window.__frameCount || 0) + 1;
 }
 
 window.__solmar = game;

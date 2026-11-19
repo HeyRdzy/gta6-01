@@ -81,15 +81,19 @@ export function stageShot(name, game) {
     story.startNext(events);
     story.stepIndex = 1;
     story._enterStep(events);
-    // Rio in the open on the dock road, rivals ahead of him in a loose
-    // line, beacon overhead — all three read in one frame.
-    hero.teleport(102, -66, Math.PI * 0.92);
+    // Restage the fight in the open dock yard: Rio on the pier road facing
+    // west, rivals in a loose line ahead of him, the gold beacon rising
+    // behind him. The camera comes in low from the south-east over the
+    // beach, so the marina office can never sit between it and the action.
+    combat.clearRivals();
+    combat.spawnRivals([[100, -88], [108, -80], [102, -96], [116, -90]]);
+    hero.teleport(122, -84, -Math.PI / 2);
     state.cash = 3120;
     state.clockMin = 17 * 60 + 55;
     state.dayT = 0.1;
     display.showPlay();
     display.say('Mara Voss: The Kestrel crew is waiting at the docks. Clear them out.', 8);
-    return pose(88, 6.5, -58, 108, 1.6, -86);
+    return pose(141, 5.5, -72, 100, 1.5, -88);
   }
 
   // start: title screen over a golden-hour vista — downtown towers left,
