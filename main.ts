@@ -1,12 +1,11 @@
-// Solmar Heat for gta6-01 (Node 22, standard library only): the entry is the static
-// game in this directory's game/ folder — a Three.js open-world crime game set in the
-// fictional coastal city of Solmar Bay, playable offline from game/index.html with no
-// build step and no network request. This program hands it in: it copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the
-// summary the judge reads, using the vendored make.fun library.
+// Solmar Heat, gta6-01 entrypoint (Node 22, standard library only).
+// The game itself is the static Three.js open world under game/ — no build
+// step, no network at runtime, it opens straight from game/index.html.
+// This file only hands the entry in: it copies game/ and screenshots/ next
+// to this file into the output directory and writes dossier.json there,
+// the summary the make.fun judge reads, via the vendored library.
 //
-// Play it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// Try it locally first with `node serve.ts` (http://localhost:8080), then:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -14,26 +13,26 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const repoRoot = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const here = fileURLToPath(new URL('.', import.meta.url));
+const dest = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-// The game must have an entry page, or the grader would have nothing to open.
-if (!existsSync(join(repoRoot, 'game', 'index.html'))) {
-  throw new Error('Solmar Heat has no game/index.html to hand in');
+// Without an entry page there is no game for the grader to open.
+if (!existsSync(join(here, 'game', 'index.html'))) {
+  throw new Error('Solmar Heat is missing game/index.html');
 }
 
-mkdirSync(out, { recursive: true });
-cpSync(join(repoRoot, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(repoRoot, 'screenshots'))) cpSync(join(repoRoot, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+mkdirSync(dest, { recursive: true });
+cpSync(join(here, 'game'), join(dest, 'game'), { recursive: true });
+mkdirSync(join(dest, 'screenshots'), { recursive: true });
+if (existsSync(join(here, 'screenshots'))) {
+  cpSync(join(here, 'screenshots'), join(dest, 'screenshots'), { recursive: true });
+}
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
-// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
+// Caps from the kit gate: at most 4 screenshots of 256 KiB, game/ under
+// 993 files and 48 MiB, and the dossier itself under 160 KiB of text.
 writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
+  join(dest, 'dossier.json'),
+  buildDossier(dest, {
     text_max_bytes: 163840,
     screenshots: { max: 4, max_bytes: 262144 },
     game_max_files: 993,

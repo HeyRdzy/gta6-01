@@ -5,42 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Solmar Heat — Open-World Crime in Solmar Bay</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1210; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #241016; font-family: "Trebuchet MS", Verdana, sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-
-  /* HUD: top-right stats, top-centre objective, bottom-left minimap. Top-left stays clear. */
-  #hud { position: fixed; inset: 0; pointer-events: none; display: none; color: #f5efe2; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
-  #hud-top-right { position: absolute; top: 14px; right: 16px; text-align: right; }
-  #hud-cash { font-size: 30px; font-weight: 800; color: #7dd87d; }
-  #hud-stars { font-size: 26px; letter-spacing: 3px; margin-top: 2px; }
-  #hud-health { width: 190px; height: 12px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); border-radius: 6px; margin-top: 6px; margin-left: auto; overflow: hidden; }
-  #hud-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #57b25e, #8be08b); }
-  #hud-health-text { font-size: 13px; margin-top: 2px; }
-  #hud-clock { font-size: 20px; font-weight: 700; margin-top: 4px; }
-  #hud-speed { font-size: 22px; font-weight: 700; color: #ffb347; margin-top: 2px; }
-  #hud-objective { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); max-width: 560px; text-align: center; font-size: 17px; font-weight: 600; background: rgba(0,0,0,.5); padding: 8px 16px; border-radius: 8px; border-left: 4px solid #ffc23b; }
-  #hud-toast { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); font-size: 15px; font-weight: 600; color: #ffd98a; background: rgba(0,0,0,.55); padding: 6px 14px; border-radius: 6px; opacity: 0; transition: opacity .3s; }
-  #hud-subtitle { position: absolute; bottom: 118px; left: 50%; transform: translateX(-50%); max-width: 720px; text-align: center; font-size: 18px; font-weight: 600; background: rgba(0,0,0,.6); padding: 10px 18px; border-radius: 8px; opacity: 0; transition: opacity .3s; }
-  #minimap-wrap { position: absolute; left: 16px; bottom: 16px; background: rgba(0,0,0,.55); padding: 6px; border-radius: 10px; border: 2px solid rgba(255,255,255,.35); }
-  #minimap { display: block; width: 190px; height: 190px; }
-  #minimap-label { font-size: 11px; letter-spacing: 2px; text-align: center; color: #ffd98a; margin-top: 2px; }
-  #crosshair { position: fixed; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; display: none; pointer-events: none; }
-  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,.9); box-shadow: 0 0 3px #000; }
-  #crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
-  #crosshair::after { left: 0; top: 8px; width: 18px; height: 2px; }
-  #damage-vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(255,0,0,.55) 100%); transition: opacity .15s; }
-  #hud-hint { position: absolute; bottom: 16px; right: 16px; font-size: 13px; color: rgba(245,239,226,.85); background: rgba(0,0,0,.45); padding: 8px 12px; border-radius: 8px; line-height: 1.6; }
-
-  /* Full screens: title, pause, death. */
-  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; text-align: center; color: #f5efe2; background: linear-gradient(180deg, rgba(20,8,4,.25) 0%, rgba(20,8,4,.72) 100%); }
-  .screen h1 { font-size: 76px; margin: 0; letter-spacing: 4px; color: #ffb347; text-shadow: 0 4px 0 #7a2e0e, 0 8px 24px rgba(0,0,0,.7); font-style: italic; }
-  .screen h2 { font-size: 22px; margin: 6px 0 0; font-weight: 500; color: #ffe9c4; }
-  .screen p { max-width: 620px; font-size: 16px; line-height: 1.6; margin: 18px 0; color: #f5efe2; }
-  .screen .controls { font-size: 14px; line-height: 1.9; background: rgba(0,0,0,.5); padding: 12px 22px; border-radius: 10px; margin-bottom: 22px; }
-  .screen button { pointer-events: auto; font-size: 19px; font-weight: 700; padding: 12px 34px; margin: 4px; border: none; border-radius: 10px; cursor: pointer; background: #ffb347; color: #2a1503; box-shadow: 0 4px 0 #a86a12; }
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; color: #fdf6e3; text-shadow: 0 1px 4px rgba(0,0,0,.85); }
+  #panel-stats { position: absolute; top: 12px; right: 14px; text-align: right; }
+  #stat-cash { font-size: 32px; font-weight: 900; color: #8be08b; }
+  #stat-stars { font-size: 26px; letter-spacing: 4px; margin-top: 2px; }
+  #stat-health-bar { width: 180px; height: 11px; background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.55); border-radius: 6px; margin: 5px 0 0 auto; overflow: hidden; }
+  #stat-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #57b25e, #8be08b); }
+  #stat-health-num { font-size: 12px; margin-top: 2px; }
+  #stat-clock { font-size: 20px; font-weight: 800; margin-top: 4px; }
+  #stat-speed { font-size: 20px; font-weight: 800; color: #ffb347; margin-top: 2px; min-height: 24px; }
+  #panel-objective { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: 600px; text-align: center; font-size: 16px; font-weight: 700; background: rgba(20,8,8,.55); padding: 9px 18px; border-radius: 9px; border-bottom: 3px solid #ffc23b; }
+  #panel-toast { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); font-size: 15px; font-weight: 700; color: #ffe9a8; background: rgba(0,0,0,.6); padding: 7px 16px; border-radius: 7px; opacity: 0; transition: opacity .3s; }
+  #panel-subtitle { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); max-width: 760px; text-align: center; font-size: 18px; font-weight: 700; background: rgba(0,0,0,.65); padding: 11px 20px; border-radius: 9px; opacity: 0; transition: opacity .3s; }
+  #map-wrap { position: absolute; left: 14px; bottom: 14px; background: rgba(0,0,0,.6); padding: 6px; border-radius: 10px; border: 2px solid rgba(255,255,255,.4); }
+  #map-canvas { display: block; width: 190px; height: 190px; }
+  #map-wrap div { font-size: 11px; letter-spacing: 3px; text-align: center; color: #ffd98a; margin-top: 2px; }
+  #crosshair { position: fixed; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; display: none; pointer-events: none; }
+  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 4px #000; }
+  #crosshair::before { left: 9px; top: 0; width: 2px; height: 20px; }
+  #crosshair::after { left: 0; top: 9px; width: 20px; height: 2px; }
+  #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 52%, rgba(220,0,0,.6) 100%); }
+  #hint-bar { position: absolute; bottom: 14px; right: 14px; font-size: 13px; line-height: 1.7; background: rgba(0,0,0,.5); padding: 9px 13px; border-radius: 9px; }
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; text-align: center; color: #fdf6e3; background: linear-gradient(180deg, rgba(30,8,4,.2) 0%, rgba(30,8,4,.78) 100%); }
+  .screen h1 { font-size: 80px; margin: 0; letter-spacing: 5px; color: #ffb347; text-shadow: 0 4px 0 #7a2e0e, 0 10px 28px rgba(0,0,0,.8); font-style: italic; }
+  .screen h2 { font-size: 22px; margin: 8px 0 0; font-weight: 500; color: #ffe9c4; }
+  .screen p { max-width: 640px; font-size: 16px; line-height: 1.65; margin: 20px 0; }
+  .screen .keys { font-size: 14px; line-height: 2; background: rgba(0,0,0,.55); padding: 13px 24px; border-radius: 11px; margin-bottom: 24px; }
+  .screen button { pointer-events: auto; font-size: 19px; font-weight: 800; padding: 13px 36px; margin: 4px; border: none; border-radius: 11px; cursor: pointer; background: #ffb347; color: #2a1503; box-shadow: 0 4px 0 #a86a12; }
   .screen button:hover { background: #ffc76b; }
-  .screen button.secondary { background: #3a4150; color: #f5efe2; box-shadow: 0 4px 0 #1c2027; }
+  .screen button.alt { background: #3a4150; color: #fdf6e3; box-shadow: 0 4px 0 #1c2027; }
   #screen-title { display: flex; }
 </style>
 <script type="importmap">
@@ -49,56 +44,55 @@
 </head>
 <body>
 <canvas id="game" aria-label="Solmar Heat: an open-world crime game in the fictional city of Solmar Bay"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
-<div id="damage-vignette"></div>
+<div id="vignette"></div>
 <div id="crosshair"></div>
 
 <div id="hud">
-  <div id="hud-top-right">
-    <div id="hud-cash">$250</div>
-    <div id="hud-stars">☆☆☆☆☆</div>
-    <div id="hud-health"><div id="hud-health-fill"></div></div>
-    <div id="hud-health-text">100 HP</div>
-    <div id="hud-clock">17:00</div>
-    <div id="hud-speed"></div>
+  <div id="panel-stats">
+    <div id="stat-cash">$250</div>
+    <div id="stat-stars">☆☆☆☆☆</div>
+    <div id="stat-health-bar"><div id="stat-health-fill"></div></div>
+    <div id="stat-health-num">100 HP</div>
+    <div id="stat-clock">17:05</div>
+    <div id="stat-speed"></div>
   </div>
-  <div id="hud-objective">Follow the gold M to start your first mission</div>
-  <div id="hud-toast"></div>
-  <div id="hud-subtitle"></div>
-  <div id="minimap-wrap"><canvas id="minimap" width="190" height="190"></canvas><div id="minimap-label">SOLMAR BAY</div></div>
-  <div id="hud-hint">WASD move / drive &nbsp;·&nbsp; E enter car / start mission<br>Mouse look &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; R reload<br>Shift run &nbsp;·&nbsp; Space jump / brake &nbsp;·&nbsp; Esc pause</div>
+  <div id="panel-objective">Find the gold M to start your first job</div>
+  <div id="panel-toast"></div>
+  <div id="panel-subtitle"></div>
+  <div id="map-wrap"><canvas id="map-canvas" width="190" height="190"></canvas><div>SOLMAR BAY</div></div>
+  <div id="hint-bar">WASD move / drive &nbsp;·&nbsp; E car / job<br>Mouse look &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; R reload<br>Shift run &nbsp;·&nbsp; Space jump / brake &nbsp;·&nbsp; Esc pause</div>
 </div>
 
 <div class="screen" id="screen-title">
   <h1>SOLMAR HEAT</h1>
   <h2>An open-world crime story in Solmar Bay</h2>
-  <p>You are Rio Calder, a driver with nothing but a fast car and a debt to pay. Mara Voss has
-  five jobs for you — courier runs, a getaway, a dockyard standoff and one last bank heist.
-  Steal cars, dodge the Solmar PD, and own the city before the sun goes down.</p>
-  <div class="controls">WASD — move / drive &nbsp;·&nbsp; Mouse — look &nbsp;·&nbsp; Click — shoot &nbsp;·&nbsp; E — enter car / start mission<br>
+  <p>You are Rio Calder, a driver with a debt and a fast car. Fixer Mara Voss has five jobs
+  for you — courier runs, a getaway, a dockyard standoff and one last bank heist. Steal cars,
+  outrun the Solmar PD, take taxi fares on the side, and own the city before the sun goes down.</p>
+  <div class="keys">WASD — move / drive &nbsp;·&nbsp; Mouse — look &nbsp;·&nbsp; Click — shoot &nbsp;·&nbsp; E — car / job<br>
   Shift — run &nbsp;·&nbsp; Space — jump / brake &nbsp;·&nbsp; R — reload &nbsp;·&nbsp; Esc — pause &nbsp;·&nbsp; M — mute</div>
   <div>
     <button id="btn-start" type="button">Start New Game</button>
-    <button id="btn-continue" type="button" class="secondary" style="display:none">Continue</button>
+    <button id="btn-continue" type="button" class="alt" style="display:none">Continue</button>
   </div>
 </div>
 
 <div class="screen" id="screen-pause">
-  <h1 style="font-size:52px">PAUSED</h1>
-  <p>Your progress is saved. The city will wait — the cops might not.</p>
+  <h1 style="font-size:54px">PAUSED</h1>
+  <p>Progress saved. The city waits — the cops might not.</p>
   <div>
     <button id="btn-resume" type="button">Resume</button>
-    <button id="btn-quit" type="button" class="secondary">Save &amp; Quit to Title</button>
-    <button id="btn-mute" type="button" class="secondary">Sound: On</button>
+    <button id="btn-quit" type="button" class="alt">Save &amp; Quit to Title</button>
+    <button id="btn-mute" type="button" class="alt">Sound: On</button>
   </div>
 </div>
 
 <div class="screen" id="screen-dead">
-  <h1 style="font-size:52px">WASTED</h1>
-  <p>Solmar Bay chewed you up. You wake up at Solmar General, $100 lighter, with the story still waiting.</p>
+  <h1 style="font-size:54px">WASTED</h1>
+  <p>Solmar Bay chewed you up. You wake at the plaza, $100 lighter, the story still waiting.</p>
   <div><button id="btn-respawn" type="button">Get Back Up</button></div>
 </div>
 
-<script type="module" src="./src/main.js"></script>
+<script type="module" src="./src/boot.js"></script>
 </body>
 </html>

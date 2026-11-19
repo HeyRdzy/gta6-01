@@ -4,65 +4,90 @@
 [![Solmar Heat rank on make.fun](https://make.fun/badge/gta6-01/HeyRdzy/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01)
 [![Solmar Heat reward on make.fun](https://make.fun/badge/gta6-01/HeyRdzy/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01)
 
-Solmar Heat is a 3D open-world crime game in the fictional coastal city of Solmar Bay, built for the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01) ("Make GTA 6"). You are Rio Calder, a driver with nothing but a fast car and a debt to pay. Mara Voss has five jobs for you — courier runs, a getaway, a dockyard standoff and one last bank heist. Steal cars, dodge the Solmar PD, and own the city before the sun goes down.
+An open-world crime game in the fictional sun-soaked coastal city of Solmar Bay.
+You are Rio Calder, a driver with a debt to pay. Fixer Mara Voss has five jobs for
+you — and the Solmar PD has other plans.
 
-## How to play
-
-Start on the title screen, then follow the gold **M** marker to pick up your next mission. Each mission has waypoint beacons, on-screen objectives and a cash reward at the end. Crime raises your heat with the Solmar PD — heat becomes wanted stars, and stars bring the cops. Lay low and the heat cools off; get wasted and you wake up at Solmar General, $100 lighter, with the story still waiting.
-
-### Controls
-
-| Key | Action |
-| --- | --- |
-| WASD / arrow keys | Move / drive |
-| Mouse | Look |
-| Click | Shoot |
-| E | Enter car / start mission |
-| Shift | Run |
-| Space | Jump (on foot) / brake (driving) |
-| R | Reload |
-| Esc | Pause |
-| M | Mute |
-
-The HUD shows your cash, wanted stars, health, the in-game clock, your speed, the current objective and a minimap of Solmar Bay. Progress is saved, so you can continue where you left off.
-
-## Missions
-
-Five story missions, in order:
-
-1. **Sunset Courier** — Mara Voss: pick up a package at Rosa's Diner and run it to the Marina Gate before the sun drops. ($300)
-2. **Getaway Driver** — Mara Voss: grab a car, pick Mara up, and lose the cops at the Old Cannery. ($500)
-3. **Package Run** — Dario Fen: collect five stashed packages around Solmar Bay and bring the haul back to the diner. ($400)
-4. **Dockyard Standoff** — Mara Voss: clear the Kestrel crew at the docks, then report back to Mara. ($700)
-5. **The Solmar Heist** — Mara Voss: grab the vault cash at Solmar Trust Bank and escape to the boat on the beach. ($1,500)
-
-## Tech
-
-- Three.js (vendored, no CDN) rendering a full 3D city: streets, traffic, pedestrians, the marina, the dockyard and the beach, under a day-cycle sky.
-- Plain ES modules in `game/src/` — one module per system: city, player, vehicles, pedestrians, police/wanted, missions, HUD, audio and input. No build step, no network requests; the game plays offline straight from `game/index.html`.
-- `main.ts` (Node 22, standard library only) hands the entry in: it copies `game/` and `screenshots/` to the output directory and writes `dossier.json` with the vendored make.fun library.
-- `serve.ts` is a tiny static server for local play.
-
-## Run locally
+## Play it
 
 ```sh
 node serve.ts
 ```
 
-Then open <http://localhost:8080> in a desktop browser. Use `node serve.ts --port 9000` for a different port.
+Then open http://localhost:8080 in desktop Chrome. No build step, no network:
+the game is static files under `game/`, and Three.js is vendored in
+`game/vendor/three.module.min.js`.
 
-## Verify the entry build
+## What is in the city
 
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-```
+- **A full 3D bay to explore** — downtown towers with lit windows, a beach and
+  a pier on the east edge, a park, palms and street lamps, all under a sunset
+  sky that slowly cycles from golden hour into dusk.
+- **On foot and behind the wheel** — WASD to move, mouse to look, Shift to run,
+  Space to jump. Press E to steal a car and drive with arcade handling; Space
+  brakes. Hard crashes dent the car, and a badly damaged car smokes before it
+  gives up entirely.
+- **Traffic and pedestrians** — cars cruise the street grid and pedestrians
+  stroll the sidewalks; both scatter when trouble starts.
+- **Wanted heat, 1–5 stars** — stealing, hitting pedestrians, shooting and
+  ramming all raise the heat. Cruisers chase and ram, and at 3 stars the PD
+  throws roadblocks across the road ahead. Get caught on foot and you are
+  busted: a fine, and a wake-up at Solmar PD. Lay low and the heat bleeds off.
+- **Five story jobs** — Sunset Courier ($300, timed), Getaway Driver ($500,
+  survive the chase), Package Run ($400, five drops), Dockyard Standoff ($700,
+  clear the Kestrel crew) and The Solmar Heist ($1,500, crack the bank vault
+  and run for the pier). A gold beacon marks the next objective, and Mara
+  talks you through each job in subtitles.
+- **Side work** — taxi fares pay $60–$120 a ride while you drive, and the
+  beach stunt ramps pay $80 a jump if you hit them fast enough.
+- **Combat** — click to shoot (hitscan with tracers), R or F to reload, a
+  12-round magazine. Rivals shoot back.
+- **HUD and minimap** — cash, health, wanted stars, clock, speed, the current
+  objective, toasts, a canvas minimap with streets, beach, the player arrow,
+  police dots and the waypoint. Title, pause and WASTED screens, and a save
+  file in localStorage so you can continue later.
+- **Sound, synthesised live** — engine hum, police sirens, gunshots, pickups
+  and mission jingles, all from WebAudio. No audio files. M mutes.
 
-This writes the handed-in game and `out/dossier.json`. The `out/` directory is git-ignored.
+## Controls
+
+| Key | Action |
+| --- | --- |
+| WASD | Move / drive |
+| Mouse | Look (click the game to lock the pointer) |
+| E | Enter or leave a car / start a job at the gold M |
+| Click | Shoot (on foot) |
+| R / F | Reload |
+| Shift | Run |
+| Space | Jump / brake |
+| Esc | Pause |
+| M | Mute |
+
+## Layout
+
+- `game/index.html` — page, HUD, menus, import map for Three.js
+- `game/src/boot.js` — renderer, frame loop, menus, camera, interactions
+- `game/src/world.js` — the bay: streets, towers, beach, park, pier, sky cycle
+- `game/src/state.js` — cash, health, heat, clock, save file
+- `game/src/hero.js` — Rio on foot and driving, car damage and smoke
+- `game/src/traffic.js` — parked cars, traffic AI, pedestrians
+- `game/src/cops.js` — wanted stars, cruiser chases, roadblocks, busts
+- `game/src/story.js` — the five jobs, taxi fares, stunt ramps
+- `game/src/combat.js` — hitscan shooting, rivals, tracers
+- `game/src/display.js` — HUD, minimap, screens, subtitles, toasts
+- `game/src/sound.js` — WebAudio synth: engine, siren, shots, jingles
+- `game/src/controls.js` — keyboard, mouse look, pointer lock
+- `game/src/stage.js` — the `?shot=` scenes used for the screenshots
+- `game/src/util.js` — seedable random, geometry helpers
+- `main.ts` — the make.fun entrypoint: copies `game/` and `screenshots/`
+  to the output and writes `dossier.json`
 
 ## Screenshots
 
-Four screenshots live in `screenshots/`: the title screen, open-world play, a police chase and a mission.
+The four shots in `screenshots/` are real renders of the game in a browser,
+staged with `?shot=start|play|chase|mission` (see `shots.json`).
 
-## License
+## Credits
 
-MIT — see [LICENSE](LICENSE).
+Solmar Heat is an original game: the city, the characters, the story and the
+code are all its own. Nothing is taken from any commercial game.
