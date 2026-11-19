@@ -22,6 +22,14 @@ if (!existsSync(join(here, 'game', 'index.html'))) {
   throw new Error('Solmar Heat is missing game/index.html');
 }
 
+// The judge grades from the screenshots first: never ship a build
+// whose screenshot folder is missing or empty.
+import { readdirSync } from 'node:fs';
+const shotDir = join(here, 'screenshots');
+if (!existsSync(shotDir) || readdirSync(shotDir).filter((f) => f.endsWith('.jpg')).length === 0) {
+  throw new Error('Solmar Heat is missing screenshots/*.jpg — retake them first');
+}
+
 mkdirSync(dest, { recursive: true });
 cpSync(join(here, 'game'), join(dest, 'game'), { recursive: true });
 mkdirSync(join(dest, 'screenshots'), { recursive: true });
