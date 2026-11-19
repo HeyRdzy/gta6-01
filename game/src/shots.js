@@ -1,79 +1,99 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// The screenshot scenes behind ?shot=start|play|chase|mission (with &seed=N).
+// Each one stages a deterministic moment of the real game — same seed, same frame —
+// by placing the player, cars, police and a mission, then letting the world run for
+// a few seconds so traffic and pedestrians are mid-motion when the frame is taken.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import * as THREE from 'three';
+import { WANTED } from './config.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
-}
-
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
+/** A fixed camera pose for a shot: where it sits and what it looks at. */
+function pose(x, y, z, lx, ly, lz) {
+  return { position: new THREE.Vector3(x, y, z), lookAt: new THREE.Vector3(lx, ly, lz) };
 }
 
 /**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
+ * Stage the named scene on the live game and return the camera pose to shoot it from.
+ * Names: start, play, chase, mission; anything else is start.
  */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+export function stageShot(name, game) {
+  const { player, traffic, peds, police, missions, wanted, hud } = game;
+  wanted.clear();
+  police.clearAll();
+  missions.active = null;
+  missions.stepIndex = 0;
+  missions.setMarkerVisible(false);
+  game.cash = 2450;
+  player.state.health = 100;
+  player.state.ammo = 12;
+  player.state.reloading = 0;
+  game.clockMinutes = 32;
+
+  if (name === 'play') {
+    player.teleport(6, 96, Math.PI * 0.95);
+    const car = game.parkedCars[0];
+    if (car) {
+      car.mesh.position.set(10, 0, 104);
+      car.mesh.rotation.y = Math.PI / 2;
+      car.heading = Math.PI / 2;
+    }
+    missions.completed = 0;
+    missions.startNextMission();
+    hud.showPlay();
+    hud.showSubtitle('Mara Voss: Pick up the package at Rosa\u2019s Diner — and don\u2019t be late.', 8);
+    return pose(14, 7, 116, 0, 2, 90);
   }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
+
+  if (name === 'chase') {
+    const car = game.parkedCars[1] || game.parkedCars[0];
+    player.teleport(0, 40, Math.PI);
+    if (car) {
+      // Facing -z (heading PI); the camera sits behind at +z, police close in from +z.
+      car.mesh.position.set(0, 0, 40);
+      car.mesh.rotation.y = Math.PI;
+      car.heading = Math.PI;
+      car.speed = 26;
+      player.state.driving = car;
+      player.state.speed = 26;
+      player.mesh.visible = false;
+      game.audio.startEngine();
+    }
+    wanted.addHeat(50, game.now);
+    police.update(0.016, player, game.now, {});
+    const copSpots = [[-4, 58], [4, 64], [0, 70]];
+    police.cars.forEach((cop, index) => {
+      const spot = copSpots[index % copSpots.length];
+      cop.mesh.position.set(spot[0], 0, spot[1]);
+      cop.speed = 26;
+      cop.heading = Math.PI;
+    });
+    game.clockMinutes = 48;
+    hud.showPlay();
+    hud.showSubtitle('WANTED — lose the cops!', 6);
+    return pose(-9, 8, 68, 0, 1.5, 32);
   }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+
+  if (name === 'mission') {
+    missions.completed = 3;
+    // Player already at the docks, camera over their shoulder with a clear sightline
+    // to the Kestrel crew (the old pose was blocked by the (100,-100) tower).
+    player.teleport(108, -88, Math.PI * 0.8);
+    missions.startNextMission();
+    game.cash = 3120;
+    game.clockMinutes = 55;
+    hud.showPlay();
+    hud.showSubtitle('Mara Voss: The Kestrel crew is waiting at the docks. Clear them out.', 8);
+    return pose(98, 6, -74, 120, 2, -100);
+  }
+
+  // start: the title screen over a sunset vista of downtown and the sea.
+  player.teleport(-8, 108, Math.PI * 0.8);
+  const car = game.parkedCars[2] || game.parkedCars[0];
+  if (car) {
+    car.mesh.position.set(-2, 0, 112);
+    car.mesh.rotation.y = Math.PI * 0.6;
+    car.heading = Math.PI * 0.6;
+  }
+  missions.completed = 0;
+  hud.showTitle(false);
+  return pose(-40, 26, 150, 40, 8, -40);
 }
