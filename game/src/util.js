@@ -1,5 +1,6 @@
 // Small helpers shared by every Solmar Heat module: a seedable random
-// stream, number helpers and 2D geometry. Nothing here touches the DOM.
+// stream, number helpers, easing and damping for the camera and the HUD,
+// and 2D geometry. Nothing here touches the DOM.
 
 /** Deterministic random stream (mulberry32) so a seed replays the same bay. */
 export function makeStream(seed) {
@@ -26,6 +27,19 @@ export function clampNum(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /** Linear interpolation between a and b. */
 export function lerpNum(a, b, t) { return a + (b - a) * t; }
+
+/** Ease-out cubic: fast start, gentle landing — for camera and UI moves. */
+export function easeOutCubic(t) { return 1 - Math.pow(1 - clampNum(t, 0, 1), 3); }
+
+/** Frame-rate independent damping factor for a rate (per second). */
+export function dampFactor(rate, dt) { return 1 - Math.exp(-rate * dt); }
+
+/** Move v toward target by at most rate*dt, without overshoot. */
+export function dampNum(v, target, rate, dt) {
+  const d = target - v;
+  const step = d * dampFactor(rate, dt);
+  return Math.abs(step) >= Math.abs(d) ? target : v + step;
+}
 
 /** Wrap an angle to (-PI, PI]. */
 export function wrapAngle(a) {

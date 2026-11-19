@@ -1,7 +1,9 @@
-// Screenshot staging for Solmar Heat v2 (?shot=start|play|chase|mission).
-// Each scene stages a real moment of the live game — same seed, same frame —
-// by placing Rio, the cars, the cops and a job, then the boot loop keeps
-// the world running for a few seconds before the frame is taken.
+// Screenshot staging for Solmar Heat v3 (?shot=start|play|chase|mission).
+// Every scene is a real moment of the live game at golden hour — the same
+// seed, the same frame — with Rio, the cars, the cops and a job placed so
+// the camera reads the game at a glance. The mission shot is framed tight
+// this time: Rio in the open, rivals ahead, beacon overhead, no palm in
+// the way.
 
 import * as THREE from 'three';
 
@@ -25,6 +27,7 @@ export function stageShot(name, game) {
   state.cash = 2450;
   state.health = 100;
   state.heat = 0;
+  state.dayT = 0.06; // golden hour for every shot
   state.clockMin = 17 * 60 + 32;
   combat.ammo = 12;
   combat.reloading = 0;
@@ -33,14 +36,20 @@ export function stageShot(name, game) {
     hero.teleport(2, 84, Math.PI * 0.95);
     const car = street.cars[0];
     if (car) {
-      car.mesh.position.set(8, 0, 92);
+      car.mesh.position.set(9, 0, 92);
       car.mesh.rotation.y = Math.PI / 2;
       car.heading = Math.PI / 2;
+    }
+    const car2 = street.cars[1];
+    if (car2) {
+      car2.mesh.position.set(-7, 0, 76);
+      car2.mesh.rotation.y = Math.PI;
+      car2.heading = Math.PI;
     }
     story.startNext(events);
     display.showPlay();
     display.say('Mara Voss: Pick up the parcel at Rosa\u2019s Diner — and don\u2019t be late.', 8);
-    return pose(2, 14, 120, 2, 1, 80);
+    return pose(7, 8.5, 110, 0, 1.5, 80);
   }
 
   if (name === 'chase') {
@@ -64,7 +73,7 @@ export function stageShot(name, game) {
     });
     display.showPlay();
     display.say('WANTED — lose the cops!', 6);
-    return pose(-8, 8, 104, 0, 1.5, 60);
+    return pose(-7, 5.5, 102, 0, 1.5, 66);
   }
 
   if (name === 'mission') {
@@ -72,15 +81,19 @@ export function stageShot(name, game) {
     story.startNext(events);
     story.stepIndex = 1;
     story._enterStep(events);
-    hero.teleport(112, -82, Math.PI * 0.8);
+    // Rio in the open on the dock road, rivals ahead of him in a loose
+    // line, beacon overhead — all three read in one frame.
+    hero.teleport(102, -66, Math.PI * 0.92);
     state.cash = 3120;
     state.clockMin = 17 * 60 + 55;
+    state.dayT = 0.1;
     display.showPlay();
     display.say('Mara Voss: The Kestrel crew is waiting at the docks. Clear them out.', 8);
-    return pose(122, 7, -64, 103, 2, -88);
+    return pose(88, 6.5, -58, 108, 1.6, -86);
   }
 
-  // start: the title screen over a sunset vista of downtown and the sea.
+  // start: title screen over a golden-hour vista — downtown towers left,
+  // the sea and pier right, sun low over the bay.
   hero.teleport(-8, 108, Math.PI * 0.8);
   const car = street.cars[2] || street.cars[0];
   if (car) {
@@ -89,5 +102,5 @@ export function stageShot(name, game) {
     car.heading = Math.PI * 0.6;
   }
   display.showTitle(false);
-  return pose(-44, 28, 152, 40, 10, -40);
+  return pose(-52, 26, 148, 42, 8, -52);
 }

@@ -1,10 +1,12 @@
-// Story for Solmar Heat v2: five jobs from fixer Mara Voss, plus two ways
+// Story for Solmar Heat v3: five jobs from fixer Mara Voss, plus two ways
 // to earn on the side — taxi fares and beach stunt jumps. Each job is a
 // chain of steps (go somewhere, hold a spot, survive, clear the rivals);
-// the waypoint beacon always points at the next one.
+// the waypoint beacon always points at the next one. Markers glow now:
+// the beacon pulses gold, packages shine, ramps wear chevrons.
 
 import * as THREE from 'three';
 import { flatDist } from './util.js';
+import { glowTexture } from './visuals.js';
 
 const JOBS = [
   {
@@ -51,6 +53,24 @@ const JOBS = [
 const PACKAGE_SPOTS = [[-84, -84], [42, -84], [-42, 42], [84, 84], [0, -126]];
 const TAXI_DROPS = [[-21, -21], [21, 63], [105, -63], [-63, 105], [0, 96]];
 
+function chevronTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#8a5a2a';
+  g.fillRect(0, 0, 128, 128);
+  g.fillStyle = '#ffc23b';
+  for (let y = 8; y < 128; y += 32) {
+    g.beginPath();
+    g.moveTo(24, y); g.lineTo(64, y + 16); g.lineTo(104, y);
+    g.lineTo(104, y + 10); g.lineTo(64, y + 26); g.lineTo(24, y + 10);
+    g.closePath(); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export class Story {
   constructor(scene, bay, state, combat) {
     this.scene = scene;
@@ -59,18 +79,25 @@ export class Story {
     this.combat = combat;
     this.jobIndex = 0;
     this.stepIndex = 0;
-    this.active = null; // { def, timer, collected }
+    this.active = null;
     this.packages = [];
     this.taxi = { state: 'idle', pickup: null, drop: null, fare: 0, wait: 6 };
     this.stuntCooldown = 0;
+    this._glowTex = glowTexture('rgba(255,194,59,0.9)', 'rgba(255,194,59,0)');
 
-    // Gold waypoint beacon.
+    // Gold waypoint beacon: a pulsing column with a halo at its foot.
     this.beacon = new THREE.Mesh(
       new THREE.CylinderGeometry(1.6, 1.6, 26, 12, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffc23b, transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xffc23b, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }),
     );
     this.beacon.visible = false;
     scene.add(this.beacon);
+    this.beaconHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this._glowTex, transparent: true, opacity: 0.6, depthWrite: false,
+    }));
+    this.beaconHalo.scale.set(12, 12, 1);
+    this.beaconHalo.visible = false;
+    scene.add(this.beaconHalo);
     this.ring = new THREE.Mesh(
       new THREE.TorusGeometry(3, 0.3, 8, 24),
       new THREE.MeshBasicMaterial({ color: 0xffc23b }),
@@ -79,27 +106,37 @@ export class Story {
     this.ring.visible = false;
     scene.add(this.ring);
 
-    // Package boxes for the Package Run.
+    // Package crates: gold, emissive, with a halo so they read at dusk.
     for (const [x, z] of PACKAGE_SPOTS) {
       const m = new THREE.Mesh(
-        new THREE.BoxGeometry(1.4, 1.4, 1.4),
-        new THREE.MeshLambertMaterial({ color: 0xffc23b }),
+        new THREE.BoxGeometry(1.5, 1.5, 1.5),
+        new THREE.MeshStandardMaterial({ color: 0xffc23b, emissive: 0xa87800, emissiveIntensity: 0.55, roughness: 0.5 }),
       );
       m.position.set(x, 0.9, z);
       m.visible = false;
+      m.castShadow = true;
       scene.add(m);
-      this.packages.push({ mesh: m, x, z, taken: false });
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this._glowTex, transparent: true, opacity: 0.5, depthWrite: false,
+      }));
+      halo.scale.set(5, 5, 1);
+      halo.position.set(x, 1.4, z);
+      halo.visible = false;
+      scene.add(halo);
+      this.packages.push({ mesh: m, halo, x, z, taken: false });
     }
 
-    // Stunt ramps on the beach.
+    // Stunt ramps on the beach, chevron-striped.
     this.ramps = [];
+    const rampTex = chevronTexture();
     for (const z of [-60, 0, 60]) {
       const ramp = new THREE.Mesh(
         new THREE.BoxGeometry(6, 1, 10),
-        new THREE.MeshLambertMaterial({ color: 0x8a5a2a }),
+        new THREE.MeshStandardMaterial({ map: rampTex, roughness: 0.85 }),
       );
       ramp.position.set(112, 0.8, z);
       ramp.rotation.z = -0.35;
+      ramp.castShadow = true;
       scene.add(ramp);
       this.ramps.push({ x: 112, z, usedAt: -99 });
     }
@@ -107,10 +144,16 @@ export class Story {
     // Taxi fare marker.
     this.fareMark = new THREE.Mesh(
       new THREE.CylinderGeometry(1.2, 1.2, 14, 10, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x2ee6a8, transparent: true, opacity: 0.4, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0x2ee6a8, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false }),
     );
     this.fareMark.visible = false;
     scene.add(this.fareMark);
+    this.fareHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture('rgba(46,230,168,0.9)', 'rgba(46,230,168,0)'), transparent: true, opacity: 0.55, depthWrite: false,
+    }));
+    this.fareHalo.scale.set(10, 10, 1);
+    this.fareHalo.visible = false;
+    scene.add(this.fareHalo);
   }
 
   currentJob() { return JOBS[this.jobIndex] || null; }
@@ -161,7 +204,7 @@ export class Story {
     if (step.kind === 'hold' && step.heat) this.state.addHeat(step.heat);
     if (step.kind === 'survive' && step.heat) this.state.addHeat(step.heat);
     if (step.kind === 'collect') {
-      for (const p of this.packages) { p.taken = false; p.mesh.visible = true; }
+      for (const p of this.packages) { p.taken = false; p.mesh.visible = true; p.halo.visible = true; }
       this.active.collected = 0;
     }
     if (step.kind === 'kill') this.combat.spawnRivals(step.spots);
@@ -181,6 +224,7 @@ export class Story {
       this.jobIndex++;
       this.active = null;
       this.beacon.visible = false;
+      this.beaconHalo.visible = false;
       this.ring.visible = false;
       this.combat.clearRivals();
       return;
@@ -189,18 +233,27 @@ export class Story {
   }
 
   update(dt, hero, now, events) {
-    // Waypoint beacon follows the current step.
+    // Waypoint beacon follows the current step, pulsing as it goes.
     const wp = this.waypoint();
+    const pulse = 0.3 + Math.sin(now * 3) * 0.12;
     if (wp) {
       this.beacon.visible = true;
+      this.beaconHalo.visible = true;
       this.ring.visible = true;
+      this.beacon.material.opacity = pulse;
       this.beacon.position.set(wp.x, 13, wp.z);
+      this.beaconHalo.position.set(wp.x, 2, wp.z);
       this.ring.position.set(wp.x, 0.3 + Math.sin(now * 2) * 0.2, wp.z);
+      const rs = 1 + Math.sin(now * 2) * 0.12;
+      this.ring.scale.set(rs, rs, 1);
     } else {
       this.beacon.visible = !!this.active;
+      this.beaconHalo.visible = !!this.active;
       this.ring.visible = false;
       if (this.active) {
+        this.beacon.material.opacity = pulse;
         this.beacon.position.set(hero.x, 13, hero.z);
+        this.beaconHalo.position.set(hero.x, 2, hero.z);
       }
     }
 
@@ -216,12 +269,13 @@ export class Story {
             if (events) events.toast('Too slow — the job fell through');
             this.active = null;
             this.beacon.visible = false;
+            this.beaconHalo.visible = false;
           }
         }
       } else if (step.kind === 'collect') {
         for (const p of this.packages) {
           if (!p.taken && flatDist(hero.x, hero.z, p.x, p.z) < 3.5) {
-            p.taken = true; p.mesh.visible = false;
+            p.taken = true; p.mesh.visible = false; p.halo.visible = false;
             this.active.collected++;
             this.state.addCash(40);
             if (events) events.toast(`Package ${this.active.collected}/5 — +$40`);
@@ -241,7 +295,7 @@ export class Story {
       }
     }
 
-    // --- Taxi fares: only while driving, one fare at a time. ---------------
+    // --- Taxi fares and stunt jumps -----------------------------------------
     this.stuntCooldown -= dt;
     if (hero.driving) {
       const speed = Math.abs(hero.speed);
@@ -261,7 +315,9 @@ export class Story {
         const pz = -84 + Math.floor(Math.random() * 5) * 42;
         this.taxi = { state: 'pickup', pickup: { x: px, z: pz }, drop: null, fare: 60 + Math.floor(Math.random() * 7) * 10, wait: 0 };
         this.fareMark.visible = true;
+        this.fareHalo.visible = true;
         this.fareMark.position.set(px, 7, pz);
+        this.fareHalo.position.set(px, 1.5, pz);
         if (events) events.toast('Taxi fare waiting — green beacon');
       }
     } else if (this.taxi.state === 'pickup') {
@@ -270,6 +326,7 @@ export class Story {
         this.taxi.state = 'drop';
         this.taxi.drop = { x: drop[0], z: drop[1] };
         this.fareMark.position.set(this.taxi.drop.x, 7, this.taxi.drop.z);
+        this.fareHalo.position.set(this.taxi.drop.x, 1.5, this.taxi.drop.z);
         if (events) events.say('Passenger: Take me across town, and step on it.');
       }
     } else if (this.taxi.state === 'drop') {
@@ -279,6 +336,7 @@ export class Story {
         if (events) events.toast(`Fare complete — +$${this.taxi.fare}`);
         this.taxi = { state: 'idle', pickup: null, drop: null, fare: 0, wait: 8 };
         this.fareMark.visible = false;
+        this.fareHalo.visible = false;
       }
     }
   }

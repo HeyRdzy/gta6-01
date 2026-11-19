@@ -1,33 +1,35 @@
-// Shooting for Solmar Heat v2: hitscan fire with a tracer, a 12-round
-// magazine, R to reload, and rivals who shoot back. Firing in the open
-// raises the heat — the PD hears it too.
+// Shooting for Solmar Heat v3: hitscan fire with a glowing tracer, a
+// muzzle-flash light that pops the frame, impact sparks, a 12-round
+// magazine, R to reload, and Kestrel rivals who shoot back. Firing in the
+// open raises the heat — the PD hears it too.
 
 import * as THREE from 'three';
 import { clampNum, flatDist } from './util.js';
+import { buildPerson, walkCycle } from './traffic.js';
+import { glowTexture, sharedGeo } from './visuals.js';
 
 const MAG = 12;
 const RIVAL_HP = 100;
 const SHOT_DAMAGE = 34;
 
-function rivalMesh(x, z) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.45, 0.55, 1.5, 8),
-    new THREE.MeshLambertMaterial({ color: 0x3a3a44 }),
-  );
-  body.position.y = 1.15; g.add(body);
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.42, 10, 8),
-    new THREE.MeshLambertMaterial({ color: 0xb08a68 }),
-  );
-  head.position.y = 2.2; g.add(head);
+function rivalPerson(x, z) {
+  const person = buildPerson(0x3a3a44, 0x222226, 0xb08a68);
+  const g = person.group;
   const gun = new THREE.Mesh(
-    new THREE.BoxGeometry(0.14, 0.14, 0.9),
-    new THREE.MeshLambertMaterial({ color: 0x111111 }),
+    sharedGeo('rivalGun', () => new THREE.BoxGeometry(0.14, 0.14, 0.95)),
+    new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5, metalness: 0.7 }),
   );
-  gun.position.set(0.4, 1.5, -0.5); g.add(gun);
+  gun.position.set(0.42, 1.45, 0.4);
+  person.rig.add(gun);
+  // Kestrel red bandana.
+  const band = new THREE.Mesh(
+    sharedGeo('bandana', () => new THREE.CylinderGeometry(0.4, 0.4, 0.16, 12)),
+    new THREE.MeshStandardMaterial({ color: 0xc23b2e, roughness: 0.9 }),
+  );
+  band.position.y = 2.3;
+  person.rig.add(band);
   g.position.set(x, 0, z);
-  return g;
+  return person;
 }
 
 export class Combat {
@@ -36,9 +38,22 @@ export class Combat {
     this.state = state;
     this.ammo = MAG;
     this.reloading = 0;
-    this.rivals = []; // { mesh, hp, shootT }
+    this.rivals = [];
     this.tracers = [];
+    this.sparks = [];
     this.ray = new THREE.Raycaster();
+    // One reusable muzzle light + flash sprite: moved, never re-created.
+    this.flashLight = new THREE.PointLight(0xffc06a, 0, 22, 1.8);
+    this.scene.add(this.flashLight);
+    this.flashLightT = 0;
+    this.flashSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture('rgba(255,210,130,1)', 'rgba(255,120,40,0)'),
+      transparent: true, opacity: 0, depthWrite: false,
+    }));
+    this.flashSprite.scale.set(3.2, 3.2, 1);
+    this.scene.add(this.flashSprite);
+    this._sparkGeo = sharedGeo('spark', () => new THREE.SphereGeometry(0.09, 6, 4));
+    this._sparkMat = new THREE.MeshBasicMaterial({ color: 0xffd98a });
   }
 
   clearRivals() {
@@ -49,15 +64,35 @@ export class Combat {
   spawnRivals(spots) {
     this.clearRivals();
     for (const [x, z] of spots) {
-      const mesh = rivalMesh(x, z);
-      this.scene.add(mesh);
-      this.rivals.push({ mesh, hp: RIVAL_HP, shootT: 1 + Math.random() });
+      const person = rivalPerson(x, z);
+      this.scene.add(person.group);
+      this.rivals.push({ mesh: person.group, person, hp: RIVAL_HP, shootT: 1 + Math.random() });
     }
   }
 
   rivalsLeft() { return this.rivals.length; }
 
-  /** Fire one hitscan shot from the camera through the crosshair. */
+  _burst(point, n = 6) {
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Mesh(this._sparkGeo, this._sparkMat);
+      s.position.copy(point);
+      s.userData.v = new THREE.Vector3(
+        (Math.random() - 0.5) * 7, Math.random() * 5 + 1, (Math.random() - 0.5) * 7,
+      );
+      s.userData.life = 0.4;
+      this.scene.add(s);
+      this.sparks.push(s);
+    }
+  }
+
+  _flashAt(point) {
+    this.flashLight.position.copy(point);
+    this.flashLight.intensity = 26;
+    this.flashLightT = 0.06;
+    this.flashSprite.position.copy(point);
+    this.flashSprite.material.opacity = 0.95;
+  }
+
   shoot(origin, dir, hooks) {
     if (this.reloading > 0 || this.ammo <= 0) return false;
     this.ammo--;
@@ -76,13 +111,17 @@ export class Combat {
       }
     }
     if (!hitPoint) hitPoint = origin.clone().add(dir.clone().multiplyScalar(60));
+    this._flashAt(origin.clone().add(dir.clone().multiplyScalar(1.6)));
     if (hitRival) {
       hitRival.hp -= SHOT_DAMAGE;
+      this._burst(hitPoint, 8);
       if (hitRival.hp <= 0) {
         this.scene.remove(hitRival.mesh);
         this.rivals = this.rivals.filter((r) => r !== hitRival);
         if (hooks.onKill) hooks.onKill();
       }
+    } else {
+      this._burst(hitPoint, 3);
     }
     const geo = new THREE.BufferGeometry().setFromPoints([origin, hitPoint]);
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.95 }));
@@ -102,24 +141,39 @@ export class Combat {
       this.reloading -= dt;
       if (this.reloading <= 0) { this.ammo = MAG; this.reloading = 0; }
     }
+    if (this.flashLightT > 0) {
+      this.flashLightT -= dt;
+      if (this.flashLightT <= 0) {
+        this.flashLight.intensity = 0;
+        this.flashSprite.material.opacity = 0;
+      }
+    }
     for (const t of this.tracers) t.t -= dt;
     this.tracers = this.tracers.filter((t) => {
       if (t.t <= 0) { this.scene.remove(t.line); return false; }
       t.line.material.opacity = t.t / 0.09;
       return true;
     });
-    // Rivals shoot back when Rio is in range and on foot.
+    this.sparks = this.sparks.filter((s) => {
+      s.userData.life -= dt;
+      if (s.userData.life <= 0) { this.scene.remove(s); return false; }
+      s.userData.v.y -= 14 * dt;
+      s.position.addScaledVector(s.userData.v, dt);
+      return true;
+    });
     for (const r of this.rivals) {
       r.shootT -= dt;
       const d = flatDist(r.mesh.position.x, r.mesh.position.z, hero.x, hero.z);
       r.mesh.lookAt(hero.x, 0, hero.z);
+      walkCycle(r.person, dt, 0); // rivals hold their ground, guns raised
       if (r.shootT <= 0 && d < 42 && !hero.driving) {
         r.shootT = 1.3 + Math.random() * 0.7;
+        const from = r.mesh.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+        this._flashAt(from);
         if (Math.random() < 0.55) {
           this.state.hurt(7);
           if (hooks.onHurt) hooks.onHurt();
         }
-        const from = r.mesh.position.clone().add(new THREE.Vector3(0, 1.5, 0));
         const to = new THREE.Vector3(hero.x, 1.2, hero.z);
         const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
         const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.9 }));

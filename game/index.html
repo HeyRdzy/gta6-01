@@ -6,37 +6,42 @@
 <link rel="icon" href="data:,">
 <title>Solmar Heat — Open-World Crime in Solmar Bay</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #241016; font-family: "Trebuchet MS", Verdana, sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a0e1e; font-family: "Trebuchet MS", Verdana, sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  #hud { position: fixed; inset: 0; pointer-events: none; display: none; color: #fdf6e3; text-shadow: 0 1px 4px rgba(0,0,0,.85); }
-  #panel-stats { position: absolute; top: 12px; right: 14px; text-align: right; }
-  #stat-cash { font-size: 32px; font-weight: 900; color: #8be08b; }
-  #stat-stars { font-size: 26px; letter-spacing: 4px; margin-top: 2px; }
-  #stat-health-bar { width: 180px; height: 11px; background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.55); border-radius: 6px; margin: 5px 0 0 auto; overflow: hidden; }
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; color: #fdf6e3; }
+  .glass { background: rgba(12, 14, 26, .58); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); border: 1px solid rgba(255, 255, 255, .16); border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+  #panel-stats { position: absolute; top: 12px; right: 14px; text-align: right; padding: 12px 16px 10px; }
+  #stat-cash { font-size: 32px; font-weight: 900; color: #8be08b; text-shadow: 0 2px 8px rgba(0,0,0,.7); letter-spacing: 1px; }
+  #stat-stars { font-size: 26px; letter-spacing: 4px; margin-top: 2px; text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+  #stat-health-bar { width: 180px; height: 11px; background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.4); border-radius: 6px; margin: 6px 0 0 auto; overflow: hidden; }
   #stat-health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #57b25e, #8be08b); }
-  #stat-health-num { font-size: 12px; margin-top: 2px; }
-  #stat-clock { font-size: 20px; font-weight: 800; margin-top: 4px; }
+  #stat-health-num { font-size: 12px; margin-top: 3px; opacity: .9; }
+  #stat-clock { font-size: 20px; font-weight: 800; margin-top: 5px; }
   #stat-speed { font-size: 20px; font-weight: 800; color: #ffb347; margin-top: 2px; min-height: 24px; }
-  #panel-objective { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: 600px; text-align: center; font-size: 16px; font-weight: 700; background: rgba(20,8,8,.55); padding: 9px 18px; border-radius: 9px; border-bottom: 3px solid #ffc23b; }
-  #panel-toast { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); font-size: 15px; font-weight: 700; color: #ffe9a8; background: rgba(0,0,0,.6); padding: 7px 16px; border-radius: 7px; opacity: 0; transition: opacity .3s; }
-  #panel-subtitle { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); max-width: 760px; text-align: center; font-size: 18px; font-weight: 700; background: rgba(0,0,0,.65); padding: 11px 20px; border-radius: 9px; opacity: 0; transition: opacity .3s; }
-  #map-wrap { position: absolute; left: 14px; bottom: 14px; background: rgba(0,0,0,.6); padding: 6px; border-radius: 10px; border: 2px solid rgba(255,255,255,.4); }
-  #map-canvas { display: block; width: 190px; height: 190px; }
-  #map-wrap div { font-size: 11px; letter-spacing: 3px; text-align: center; color: #ffd98a; margin-top: 2px; }
+  #stat-ammo { font-size: 15px; font-weight: 800; color: #ffd98a; margin-top: 2px; min-height: 19px; letter-spacing: 1px; }
+  #panel-objective { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: 620px; text-align: center; font-size: 16px; font-weight: 700; padding: 10px 20px; border-bottom: 3px solid #ffc23b; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  #panel-toast { position: absolute; top: 82px; left: 50%; transform: translateX(-50%); font-size: 15px; font-weight: 700; color: #ffe9a8; padding: 8px 18px; opacity: 0; transition: opacity .3s; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  #panel-subtitle { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); max-width: 760px; text-align: center; font-size: 18px; font-weight: 700; padding: 12px 22px; opacity: 0; transition: opacity .3s; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  #map-wrap { position: absolute; left: 14px; bottom: 14px; padding: 7px; border-radius: 12px; }
+  #map-canvas { display: block; width: 190px; height: 190px; border-radius: 8px; }
+  #map-wrap div { font-size: 11px; letter-spacing: 3px; text-align: center; color: #ffd98a; margin-top: 3px; }
   #crosshair { position: fixed; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; display: none; pointer-events: none; }
   #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 4px #000; }
   #crosshair::before { left: 9px; top: 0; width: 2px; height: 20px; }
   #crosshair::after { left: 0; top: 9px; width: 20px; height: 2px; }
   #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 52%, rgba(220,0,0,.6) 100%); }
-  #hint-bar { position: absolute; bottom: 14px; right: 14px; font-size: 13px; line-height: 1.7; background: rgba(0,0,0,.5); padding: 9px 13px; border-radius: 9px; }
-  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; text-align: center; color: #fdf6e3; background: linear-gradient(180deg, rgba(30,8,4,.2) 0%, rgba(30,8,4,.78) 100%); }
-  .screen h1 { font-size: 80px; margin: 0; letter-spacing: 5px; color: #ffb347; text-shadow: 0 4px 0 #7a2e0e, 0 10px 28px rgba(0,0,0,.8); font-style: italic; }
-  .screen h2 { font-size: 22px; margin: 8px 0 0; font-weight: 500; color: #ffe9c4; }
-  .screen p { max-width: 640px; font-size: 16px; line-height: 1.65; margin: 20px 0; }
-  .screen .keys { font-size: 14px; line-height: 2; background: rgba(0,0,0,.55); padding: 13px 24px; border-radius: 11px; margin-bottom: 24px; }
-  .screen button { pointer-events: auto; font-size: 19px; font-weight: 800; padding: 13px 36px; margin: 4px; border: none; border-radius: 11px; cursor: pointer; background: #ffb347; color: #2a1503; box-shadow: 0 4px 0 #a86a12; }
-  .screen button:hover { background: #ffc76b; }
-  .screen button.alt { background: #3a4150; color: #fdf6e3; box-shadow: 0 4px 0 #1c2027; }
+  #hint-bar { position: absolute; bottom: 14px; right: 14px; font-size: 13px; line-height: 1.7; padding: 10px 14px; text-shadow: 0 1px 3px rgba(0,0,0,.8); }
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; text-align: center; color: #fdf6e3; background: linear-gradient(180deg, rgba(26,8,20,.15) 0%, rgba(26,8,20,.82) 100%); }
+  .screen h1 { font-size: 84px; margin: 0; letter-spacing: 6px; font-style: italic; font-weight: 900;
+    background: linear-gradient(180deg, #ffe9a8 15%, #ffb347 55%, #ff7a3c 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 4px 0 rgba(90,20,0,.9)) drop-shadow(0 12px 26px rgba(0,0,0,.85)); }
+  .screen h2 { font-size: 22px; margin: 10px 0 0; font-weight: 500; color: #ffe9c4; text-shadow: 0 2px 8px rgba(0,0,0,.9); }
+  .screen p { max-width: 640px; font-size: 16px; line-height: 1.65; margin: 20px 0; text-shadow: 0 2px 6px rgba(0,0,0,.9); }
+  .screen .keys { font-size: 14px; line-height: 2; padding: 13px 24px; margin-bottom: 24px; }
+  .screen button { pointer-events: auto; font-size: 19px; font-weight: 800; padding: 13px 36px; margin: 4px; border: none; border-radius: 11px; cursor: pointer; background: linear-gradient(180deg, #ffc76b, #ff9a3c); color: #2a1503; box-shadow: 0 4px 0 #a86a12, 0 8px 20px rgba(0,0,0,.5); }
+  .screen button:hover { filter: brightness(1.08); }
+  .screen button.alt { background: rgba(58,65,80,.85); color: #fdf6e3; box-shadow: 0 4px 0 #1c2027; }
   #screen-title { display: flex; }
 </style>
 <script type="importmap">
@@ -49,19 +54,20 @@
 <div id="crosshair"></div>
 
 <div id="hud">
-  <div id="panel-stats">
+  <div id="panel-stats" class="glass">
     <div id="stat-cash">$250</div>
     <div id="stat-stars">☆☆☆☆☆</div>
     <div id="stat-health-bar"><div id="stat-health-fill"></div></div>
     <div id="stat-health-num">100 HP</div>
     <div id="stat-clock">17:05</div>
     <div id="stat-speed"></div>
+    <div id="stat-ammo"></div>
   </div>
-  <div id="panel-objective">Find the gold M to start your first job</div>
-  <div id="panel-toast"></div>
-  <div id="panel-subtitle"></div>
-  <div id="map-wrap"><canvas id="map-canvas" width="190" height="190"></canvas><div>SOLMAR BAY</div></div>
-  <div id="hint-bar">WASD move / drive &nbsp;·&nbsp; E car / job<br>Mouse look &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; R reload<br>Shift run &nbsp;·&nbsp; Space jump / brake &nbsp;·&nbsp; Esc pause</div>
+  <div id="panel-objective" class="glass">Find the gold M to start your first job</div>
+  <div id="panel-toast" class="glass"></div>
+  <div id="panel-subtitle" class="glass"></div>
+  <div id="map-wrap" class="glass"><canvas id="map-canvas" width="190" height="190"></canvas><div>SOLMAR BAY</div></div>
+  <div id="hint-bar" class="glass">WASD move / drive &nbsp;·&nbsp; E car / job<br>Mouse look &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; R reload<br>Shift run &nbsp;·&nbsp; Space jump / brake &nbsp;·&nbsp; Esc pause</div>
 </div>
 
 <div class="screen" id="screen-title">
@@ -70,7 +76,7 @@
   <p>You are Rio Calder, a driver with a debt and a fast car. Fixer Mara Voss has five jobs
   for you — courier runs, a getaway, a dockyard standoff and one last bank heist. Steal cars,
   outrun the Solmar PD, take taxi fares on the side, and own the city before the sun goes down.</p>
-  <div class="keys">WASD — move / drive &nbsp;·&nbsp; Mouse — look &nbsp;·&nbsp; Click — shoot &nbsp;·&nbsp; E — car / job<br>
+  <div class="keys glass">WASD — move / drive &nbsp;·&nbsp; Mouse — look &nbsp;·&nbsp; Click — shoot &nbsp;·&nbsp; E — car / job<br>
   Shift — run &nbsp;·&nbsp; Space — jump / brake &nbsp;·&nbsp; R — reload &nbsp;·&nbsp; Esc — pause &nbsp;·&nbsp; M — mute</div>
   <div>
     <button id="btn-start" type="button">Start New Game</button>

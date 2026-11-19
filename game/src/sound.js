@@ -1,13 +1,16 @@
-// Synthesised sound for Solmar Heat v2: no audio files, everything is
-// WebAudio oscillators and filtered noise — engine hum, police siren,
-// gunshots, pickups and mission jingles.
+// Synthesised sound for Solmar Heat v3: no audio files, everything is
+// WebAudio oscillators and filtered noise. The engine now runs two
+// detuned saws through a low-pass that opens with speed, the siren wails
+// in stereo-ish alternation, and crashes get a noise burst under the thud.
 
 export class BaySound {
   constructor() {
     this.ctx = null;
     this.muted = false;
     this.engineOsc = null;
+    this.engineOsc2 = null;
     this.engineGain = null;
+    this.engineFilter = null;
     this.sirenOsc = null;
     this.sirenGain = null;
     this.sirenHigh = false;
@@ -73,30 +76,53 @@ export class BaySound {
     g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.22);
     o.connect(g); g.connect(this.ctx.destination);
     o.start(); o.stop(this.ctx.currentTime + 0.24);
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._noiseBuffer(0.12);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'bandpass'; f.frequency.value = 300;
+    const g2 = this.ctx.createGain();
+    g2.gain.setValueAtTime(0.4, this.ctx.currentTime);
+    g2.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+    src.connect(f); f.connect(g2); g2.connect(this.ctx.destination);
+    src.start();
   }
 
   engine(on, speed = 0) {
     if (!this.ctx || this.muted) { this.engineOff(); return; }
     if (!on) { this.engineOff(); return; }
     if (!this.engineOsc) {
-      this.engineOsc = this.ctx.createOscillator();
-      this.engineOsc.type = 'sawtooth';
+      this.engineFilter = this.ctx.createBiquadFilter();
+      this.engineFilter.type = 'lowpass';
+      this.engineFilter.frequency.value = 500;
       this.engineGain = this.ctx.createGain();
       this.engineGain.gain.value = 0.05;
-      const f = this.ctx.createBiquadFilter();
-      f.type = 'lowpass'; f.frequency.value = 500;
-      this.engineOsc.connect(f); f.connect(this.engineGain); this.engineGain.connect(this.ctx.destination);
+      this.engineOsc = this.ctx.createOscillator();
+      this.engineOsc.type = 'sawtooth';
+      this.engineOsc2 = this.ctx.createOscillator();
+      this.engineOsc2.type = 'sawtooth';
+      this.engineOsc.connect(this.engineFilter);
+      this.engineOsc2.connect(this.engineFilter);
+      this.engineFilter.connect(this.engineGain);
+      this.engineGain.connect(this.ctx.destination);
       this.engineOsc.start();
+      this.engineOsc2.start();
     }
-    this.engineOsc.frequency.value = 55 + Math.abs(speed) * 4.5;
-    this.engineGain.gain.value = 0.04 + Math.abs(speed) * 0.0015;
+    const rpm = 55 + Math.abs(speed) * 4.5;
+    this.engineOsc.frequency.value = rpm;
+    this.engineOsc2.frequency.value = rpm * 1.494;
+    this.engineFilter.frequency.value = 420 + Math.abs(speed) * 26;
+    this.engineGain.gain.value = 0.035 + Math.abs(speed) * 0.0016;
   }
 
   engineOff() {
-    if (this.engineOsc) {
-      try { this.engineOsc.stop(); } catch (e) { /* already stopped */ }
-      this.engineOsc = null; this.engineGain = null;
+    for (const key of ['engineOsc', 'engineOsc2']) {
+      const o = this[key];
+      if (o) { try { o.stop(); } catch (e) { /* already stopped */ } }
     }
+    this.engineOsc = null;
+    this.engineOsc2 = null;
+    this.engineGain = null;
+    this.engineFilter = null;
   }
 
   siren(on) {
@@ -106,7 +132,7 @@ export class BaySound {
       this.sirenOsc = this.ctx.createOscillator();
       this.sirenOsc.type = 'sine';
       this.sirenGain = this.ctx.createGain();
-      this.sirenGain.gain.value = 0.05;
+      this.sirenGain.gain.value = 0.045;
       this.sirenOsc.connect(this.sirenGain); this.sirenGain.connect(this.ctx.destination);
       this.sirenOsc.start();
     }

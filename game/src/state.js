@@ -1,6 +1,7 @@
-// Central game state for Solmar Heat v2: money, health, wanted heat, the
-// clock, mission progress and the save file. One object owns the numbers so
-// the HUD, the cops and the missions never drift apart.
+// Central game state for Solmar Heat v3: money, health, wanted heat, the
+// clock, mission progress, the save file, and the visual quality knobs
+// the renderer reads. One object owns the numbers so the HUD, the cops
+// and the missions never drift apart.
 
 import { clampNum } from './util.js';
 
@@ -16,6 +17,11 @@ export function heatToStars(heat) {
   return Math.min(5, 1 + Math.floor((heat - 12) / 20));
 }
 
+/** Sun height for a dayT: low and golden at the ends, gone at night. */
+export function sunElevation(dayT) {
+  return 0.42 - Math.abs(dayT - 0.18) * 0.9;
+}
+
 export class BayState {
   constructor() {
     this.reset();
@@ -26,12 +32,15 @@ export class BayState {
     this.health = START_HEALTH;
     this.heat = 0;
     this.clockMin = 17 * 60 + 5; // 17:05, golden hour over the bay
-    this.dayT = 0; // 0..1 through the dusk cycle, advances with play time
+    this.dayT = 0.06; // start at golden hour, the money look
     this.missionsDone = 0;
     this.taxiEarned = 0;
     this.stuntsDone = 0;
     this.muted = false;
     this.startedAt = Date.now();
+    // Visual quality: capped pixel ratio and shadows keep 60 fps in reach.
+    this.pixelCap = 1.75;
+    this.shadows = true;
   }
 
   stars() { return heatToStars(this.heat); }
