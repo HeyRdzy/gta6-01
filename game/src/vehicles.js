@@ -180,10 +180,6 @@ export function driveCar(car, move, dt, colliders, onCrash) {
   car.mesh.rotation.y = car.heading;
   car.mesh.position.x = Math.max(-196, Math.min(150, car.mesh.position.x));
   car.mesh.position.z = Math.max(-150, Math.min(150, car.mesh.position.z));
-  const beforeX = car.mesh.position.x - dx;
-  const beforeZ = car.mesh.position.z - dz;
-  car.mesh.position.x = beforeX + dx;
-  car.mesh.position.z = beforeZ + dz;
   const hit = resolveCarCollision(car, colliders);
   if (hit && Math.abs(car.speed) > 8 && onCrash) onCrash(Math.abs(car.speed));
   if (hit) car.speed *= 0.45;

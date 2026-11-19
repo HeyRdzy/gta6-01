@@ -100,6 +100,7 @@ export function createMissionManager(game) {
     manager.stepTimer = step.time || 0;
     manager.collected = 0;
     manager.killed = 0;
+    manager.escapeHintShown = false;
     if (step.heatOnStart) game.wanted.addHeat(step.heatOnStart, game.now);
     if (step.kind === 'collect') spawnPackages(step.spots);
     else clearPackages();
@@ -272,6 +273,10 @@ export function createMissionManager(game) {
       if (dx * dx + dz * dz < radius * radius) {
         if (step.kind === 'escape' && game.wanted.stars() > 0) {
           // Reach the hideout, then wait out the heat right there.
+          if (!manager.escapeHintShown) {
+            manager.escapeHintShown = true;
+            say('You made it — now lay low here until the heat dies down.', 5);
+          }
           return;
         }
         manager.stepIndex += 1;
