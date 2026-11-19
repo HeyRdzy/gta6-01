@@ -6,7 +6,7 @@ export class Display {
   constructor(doc) {
     this.doc = doc;
     this.el = {};
-    const ids = ['panel-stats', 'stat-cash', 'stat-stars', 'stat-health-bar', 'stat-health-num',
+    const ids = ['panel-stats', 'stat-cash', 'stat-stars', 'stat-health-bar', 'stat-health-fill', 'stat-health-num',
       'stat-clock', 'stat-speed', 'panel-objective', 'panel-toast', 'panel-subtitle',
       'map-canvas', 'screen-title', 'screen-pause', 'screen-dead', 'btn-start',
       'btn-continue', 'btn-resume', 'btn-quit', 'btn-mute', 'btn-respawn',
@@ -62,7 +62,7 @@ export class Display {
     const stars = state.stars();
     this.el['stat-stars'].textContent = '★'.repeat(stars) + '☆'.repeat(5 - stars);
     this.el['stat-stars'].style.color = stars > 0 ? '#ff5a4a' : '#f5efe2';
-    this.el['stat-health-bar'].style.width = state.health + '%';
+    this.el['stat-health-fill'].style.width = state.health + '%';
     this.el['stat-health-num'].textContent = Math.ceil(state.health) + ' HP';
     this.el['stat-clock'].textContent = state.clockText();
     this.el['stat-speed'].textContent = hero.driving

@@ -30,24 +30,24 @@ export function stageShot(name, game) {
   combat.reloading = 0;
 
   if (name === 'play') {
-    hero.teleport(6, 96, Math.PI * 0.95);
+    hero.teleport(2, 84, Math.PI * 0.95);
     const car = street.cars[0];
     if (car) {
-      car.mesh.position.set(10, 0, 104);
+      car.mesh.position.set(8, 0, 92);
       car.mesh.rotation.y = Math.PI / 2;
       car.heading = Math.PI / 2;
     }
     story.startNext(events);
     display.showPlay();
     display.say('Mara Voss: Pick up the parcel at Rosa\u2019s Diner — and don\u2019t be late.', 8);
-    return pose(14, 7, 116, 0, 2, 90);
+    return pose(2, 14, 120, 2, 1, 80);
   }
 
   if (name === 'chase') {
     const car = street.cars[1] || street.cars[0];
-    hero.teleport(0, 40, Math.PI);
+    hero.teleport(0, 84, Math.PI);
     if (car) {
-      car.mesh.position.set(0, 0, 40);
+      car.mesh.position.set(0, 0, 84);
       car.mesh.rotation.y = Math.PI;
       car.heading = Math.PI;
       hero.takeCar(car);
@@ -55,7 +55,7 @@ export function stageShot(name, game) {
     }
     state.addHeat(50);
     cops.update(0.016, hero, performance.now() / 1000, {});
-    const spots = [[-4, 58], [4, 64], [0, 70]];
+    const spots = [[-4, 100], [4, 106], [0, 112]];
     cops.cars.forEach((cop, i) => {
       const s = spots[i % spots.length];
       cop.mesh.position.set(s[0], 0, s[1]);
@@ -64,7 +64,7 @@ export function stageShot(name, game) {
     });
     display.showPlay();
     display.say('WANTED — lose the cops!', 6);
-    return pose(-9, 8, 68, 0, 1.5, 32);
+    return pose(-8, 8, 104, 0, 1.5, 60);
   }
 
   if (name === 'mission') {
@@ -72,12 +72,12 @@ export function stageShot(name, game) {
     story.startNext(events);
     story.stepIndex = 1;
     story._enterStep(events);
-    hero.teleport(96, -72, Math.PI * 0.8);
+    hero.teleport(112, -82, Math.PI * 0.8);
     state.cash = 3120;
     state.clockMin = 17 * 60 + 55;
     display.showPlay();
     display.say('Mara Voss: The Kestrel crew is waiting at the docks. Clear them out.', 8);
-    return pose(80, 7, -56, 112, 2, -88);
+    return pose(122, 7, -64, 103, 2, -88);
   }
 
   // start: the title screen over a sunset vista of downtown and the sea.

@@ -4,7 +4,7 @@
 // the waypoint beacon always points at the next one.
 
 import * as THREE from 'three';
-import { flatDist, choose } from './util.js';
+import { flatDist } from './util.js';
 
 const JOBS = [
   {
@@ -266,9 +266,9 @@ export class Story {
       }
     } else if (this.taxi.state === 'pickup') {
       if (flatDist(hero.x, hero.z, this.taxi.pickup.x, this.taxi.pickup.z) < 5) {
-        const drop = choose(TAXI_DROPS, this.taxi.drop);
+        const drop = TAXI_DROPS[Math.floor(Math.random() * TAXI_DROPS.length)];
         this.taxi.state = 'drop';
-        this.taxi.drop = drop ? { x: drop[0], z: drop[1] } : { x: 0, z: 96 };
+        this.taxi.drop = { x: drop[0], z: drop[1] };
         this.fareMark.position.set(this.taxi.drop.x, 7, this.taxi.drop.z);
         if (events) events.say('Passenger: Take me across town, and step on it.');
       }

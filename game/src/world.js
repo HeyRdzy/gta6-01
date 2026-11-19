@@ -4,7 +4,7 @@
 // the collision boxes and the sky rig the day/dusk cycle drives.
 
 import * as THREE from 'three';
-import { makeStream, span, whole, choose } from './util.js';
+import { makeStream, span, whole, choose, flatDist } from './util.js';
 
 export const BAY_SEED = 77;
 export const BAY_HALF = 150; // city runs -150..150 on x and z
@@ -87,7 +87,8 @@ export function buildBay(scene) {
   const towerMat = new THREE.MeshLambertMaterial({ map: towerTex });
   const towerTops = [];
   for (let i = 0; i < 9; i++) {
-    const bx = -126 + (i % 3) * BLOCK, bz = -126 + Math.floor(i / 3) * BLOCK;
+    // Block centres, so the streets between them stay drivable.
+    const bx = -105 + (i % 3) * BLOCK, bz = -105 + Math.floor(i / 3) * BLOCK;
     const h = span(rng, 34, 72);
     const t = box(26, h, 26, 0xffffff, bx, h / 2, bz, towerMat);
     group.add(t);
@@ -97,11 +98,14 @@ export function buildBay(scene) {
 
   // --- mid-rise blocks and houses across the grid -------------------------
   const houseColors = [0xd8a06a, 0xc9b18a, 0x9db8a4, 0xb98a8a, 0x8aa0b8, 0xd0c0a0];
+  const landmarkSpots = [[-21, -21], [21, 63], [105, -63], [-63, 105]];
   for (let gx = -2; gx <= 2; gx++) {
     for (let gz = -2; gz <= 2; gz++) {
       if (gx < 0 && gz < 0) continue; // downtown already built there
-      const bx = gx * BLOCK + span(rng, -8, 8), bz = gz * BLOCK + span(rng, -8, 8);
+      // Block centres keep the streets (multiples of 42) clear for driving.
+      const bx = gx * BLOCK + 21 + span(rng, -6, 6), bz = gz * BLOCK + 21 + span(rng, -6, 6);
       if (bx > BEACH_X - 24) continue;
+      if (landmarkSpots.some(([lx, lz]) => flatDist(bx, bz, lx, lz) < 26)) continue;
       const w = span(rng, 14, 22), d = span(rng, 14, 22), h = span(rng, 7, 18);
       const house = box(w, h, d, choose(rng, houseColors), bx, h / 2, bz);
       group.add(house);

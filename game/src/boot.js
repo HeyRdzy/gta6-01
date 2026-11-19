@@ -305,5 +305,5 @@ function frame() {
 
 window.__solmar = game;
 window.__ready = true;
-display.showTitle(state.hasSave());
+if (!shotName) display.showTitle(state.hasSave());
 frame();
