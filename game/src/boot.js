@@ -29,7 +29,7 @@ if (isShot) state.started = true;
 const renderer = createRenderer(canvas);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xe8a06a, 90, 460);
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 900);
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2500);
 camera.position.set(0, 5, 104);
 
 const sky = createSky(scene);
@@ -67,6 +67,7 @@ const controls = createControls({ ...game, sound });
 game.controls = controls;
 
 window.__solmar = { hero, street: traffic, combat, story, cops, state, world };
+window.__debug = { scene, renderer, lights, sky, state, camera, THREE };
 window.__ready = false;
 window.__shotReady = false;
 window.__shotError = null;

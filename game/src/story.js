@@ -38,7 +38,7 @@ export const MISSION_DEFS = [
     intro: 'Mara: the dock crew took our crate. Take it back, all of it.',
     start: { x: 120, z: 120 },
     steps: [
-      { type: 'kill', count: 4, x: 135, z: 135, label: 'Clear the dockyard crew (4 left)' },
+      { type: 'kill', count: 4, x: 120, z: 150, label: 'Clear the dockyard crew (4 left)' },
       { type: 'goto', x: 120, z: 90, r: 6, label: 'Grab the crate and leave the yard' },
     ],
   },

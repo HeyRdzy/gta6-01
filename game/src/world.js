@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import {
   basicMat,
+  dockTexture,
   facadeTexture,
   glowTexture,
   neonTexture,
@@ -139,7 +140,15 @@ export function buildCity(scene) {
     facadeMats.push(mat);
   }
   const roofMat = stdMat('roof', () => new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 1 }));
-  const dockMat = stdMat('dockwall', () => new THREE.MeshStandardMaterial({ color: 0x7a6a58, roughness: 0.9 }));
+  const dockTex = dockTexture(mulberry32(4242));
+  const dockMat = stdMat('dockwall', () => new THREE.MeshStandardMaterial({
+    map: dockTex,
+    emissiveMap: dockTex,
+    emissive: new THREE.Color(0xffc06a),
+    emissiveIntensity: 0.25,
+    roughness: 0.9,
+  }));
+  facadeMats.push(dockMat);
   const dockRoof = stdMat('dockroof', () => new THREE.MeshStandardMaterial({ color: 0x4a4640, roughness: 1 }));
 
   const NEON_SIGNS = [
@@ -211,7 +220,7 @@ export function buildCity(scene) {
   }
 
   function tower(cx, cz, w, h, d, variant) {
-    const side = facadeVariants[variant % facadeVariants.length];
+    const side = facadeVariants[((variant % facadeVariants.length) + facadeVariants.length) % facadeVariants.length];
     const mesh = new THREE.Mesh(unitBox(), [side, side, roofMat, roofMat, side, side]);
     mesh.scale.set(w, h, d);
     mesh.position.set(cx, h / 2, cz);

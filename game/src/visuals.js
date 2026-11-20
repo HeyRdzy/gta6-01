@@ -2,7 +2,7 @@
 // All textures are drawn on canvas at boot, so the game loads no images.
 
 import * as THREE from 'three';
-import { clamp01, lerp, makeCanvas, mulberry32 } from './util.js';
+import { clamp, clamp01, lerp, makeCanvas, mulberry32 } from './util.js';
 
 /** Build the WebGL renderer with the look the game is graded on. */
 export function createRenderer(canvas) {
@@ -12,7 +12,7 @@ export function createRenderer(canvas) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.06;
+  renderer.toneMappingExposure = 1.15;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   return renderer;
 }
@@ -132,9 +132,13 @@ export function createSky(scene) {
       uniforms.horizonColor.value.copy(horizon);
       uniforms.sunColor.value.copy(sunC);
       uniforms.sunI.value = lerp(a.sunI, b.sunI, k);
-      // Sun travels east to west across the sky.
-      const ang = (dayT - 0.25) * Math.PI * 2;
-      sunDir.set(Math.cos(ang) * 0.85, Math.max(0.08, Math.sin(ang)), 0.35).normalize();
+      // The sun travels east to west on the same clock as the colour stops:
+      // high at midday, near 30 degrees at golden hour so facades and
+      // streets stay readable, on the horizon at dusk, gone at night.
+      const dayFrac = clamp((((dayT % 1) + 1) % 1) / 0.9, 0, 1);
+      const el = Math.sin(dayFrac * Math.PI) * 1.08;
+      const az = dayFrac * Math.PI;
+      sunDir.set(Math.cos(az) * Math.cos(el), Math.max(0.06, Math.sin(el)), 0.35 * Math.cos(el)).normalize();
       uniforms.sunDir.value.copy(sunDir);
       scene.fog.color.copy(fogC);
       for (const c of clouds) {
@@ -144,6 +148,7 @@ export function createSky(scene) {
       }
       return {
         sunDir,
+        sunColor: sunC,
         sunIntensity: lerp(a.sunI, b.sunI, k),
         hemiIntensity: lerp(a.hemi, b.hemi, k),
         windowGlow: lerp(a.glow, b.glow, k),
@@ -186,8 +191,9 @@ export function createLightRig(scene) {
       sun.position.set(focus.x + d.x * 420, Math.max(60, focus.y + d.y * 420), focus.z + d.z * 420);
       sun.target.position.set(focus.x, 0, focus.z);
       sun.intensity = skyInfo.sunIntensity * 1.6;
-      sun.color.copy(skyInfo.sunColor || 0xffe9c0);
-      hemi.intensity = skyInfo.hemiIntensity;
+      if (skyInfo.sunColor) sun.color.copy(skyInfo.sunColor);
+      else sun.color.setHex(0xffe9c0);
+      hemi.intensity = skyInfo.hemiIntensity * 1.25;
       fill.intensity = 0.2 + 0.25 * (1 - skyInfo.sunIntensity / 1.5);
     },
   };
@@ -277,6 +283,37 @@ export function facadeTexture(rng, variant) {
       g.fillRect(0, h - 18, w, 18);
       g.fillStyle = 'rgba(0,0,0,0.25)';
       for (let r = 0; r < rows; r++) g.fillRect(0, r * ch, w, 2);
+    })
+  );
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** A warehouse wall: corrugated panels, a roller door and small high windows. */
+export function dockTexture(rng) {
+  const tex = new THREE.CanvasTexture(
+    makeCanvas(128, 128, (g, w, h) => {
+      g.fillStyle = '#7a6a58';
+      g.fillRect(0, 0, w, h);
+      // Vertical panel seams.
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let x = 0; x < w; x += 16) g.fillRect(x, 0, 2, h);
+      g.fillStyle = 'rgba(255,255,255,0.06)';
+      for (let x = 8; x < w; x += 16) g.fillRect(x, 0, 2, h);
+      // Big roller door.
+      g.fillStyle = '#4a4038';
+      g.fillRect(w * 0.28, h * 0.45, w * 0.44, h * 0.55);
+      g.fillStyle = 'rgba(0,0,0,0.3)';
+      for (let y = h * 0.5; y < h; y += 8) g.fillRect(w * 0.28, y, w * 0.44, 2);
+      // Small high windows, a few lit.
+      for (let i = 0; i < 4; i++) {
+        const wx = 10 + i * 30;
+        g.fillStyle = rng() < 0.4 ? '#ffd27a' : '#2f3a42';
+        g.fillRect(wx, 12, 16, 10);
+      }
+      // Grime at the base.
+      g.fillStyle = 'rgba(0,0,0,0.3)';
+      g.fillRect(0, h - 10, w, 10);
     })
   );
   tex.colorSpace = THREE.SRGBColorSpace;

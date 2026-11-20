@@ -56,7 +56,7 @@ export function mulberry32(seed) {
 export function hash2(x, z, seed) {
   let h = (seed ^ Math.imul(x + 374761393, 668265263) ^ Math.imul(z + 2246822519, 3266489917)) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  h ^= h >>> 16;
+  h = (h ^ (h >>> 16)) >>> 0; // keep unsigned: a signed XOR can go negative
   return h / 4294967296;
 }
 
