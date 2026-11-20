@@ -1,112 +1,201 @@
-// Keyboard + mouse for Solmar Heat v3. Pointer-lock mouse look with a
-// damped feel (the camera eases toward the target yaw instead of snapping),
-// a key set, and edge-triggered presses (E, R, F, Space-as-action) the
-// game consumes once per press instead of every frame the key is held.
+// Keyboard and mouse input: WASD + arrows, Shift run, Space jump, E
+// interact (enter/exit car, start a job at the beacon), R reload, M mute,
+// Esc pause. Mouse look uses pointer lock with a drag fallback, and a click
+// fires Rio's pistol.
 
-import { dampNum } from './util.js';
+import { clamp } from './util.js';
 
-export class Pad {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.keys = new Set();
-    this.pressed = new Set();
-    this.yaw = Math.PI;
-    this.pitch = 0.32;
-    this._targetYaw = Math.PI;
-    this._targetPitch = 0.32;
-    this.locked = false;
-    this.shots = 0; // mouse clicks waiting to fire
-    // Drag-to-look fallback: when the browser refuses pointer lock (some
-    // embedded or headless views), a held mouse drag still steers the
-    // camera instead of leaving the player stuck.
-    this._dragging = false;
-    this._dragX = 0;
-    this._dragY = 0;
-    this._onKeyDown = (e) => {
-      if (e.repeat) return;
-      this.keys.add(e.code);
-      this.pressed.add(e.code);
+export function createControls(game) {
+  const { canvas, hero, combat, story, state, display, sound, camera } = game;
+  const input = { forward: false, back: false, left: false, right: false, run: false, jump: false };
+  let camYaw = 0;
+  let camPitch = 0.32;
+  let pointerLocked = false;
+  let dragging = false;
+  let dragMoved = 0;
+  let lastX = 0;
+  let lastY = 0;
+
+  function interact() {
+    if (!state.started || state.paused) return;
+    if (hero.driving) {
+      hero.exitCar();
+      return;
+    }
+    // Start the next job when Rio stands at the gold beacon.
+    if (!story.active) {
+      const wp = story.objectivePoint();
+      if (wp && Math.hypot(hero.x - wp.x, hero.z - wp.z) < 5) {
+        story.startNext(display);
+        return;
+      }
+    }
+    hero.enterCar();
+  }
+
+  function togglePause() {
+    if (!state.started) return;
+    state.paused = !state.paused;
+    if (state.paused) {
+      display.showPause();
+      if (document.pointerLockElement) document.exitPointerLock();
+    } else {
+      display.hidePause();
+    }
+  }
+
+  function toggleMute() {
+    sound.ensure();
+    sound.setMuted(!state.muted);
+    display.toast(state.muted ? 'Sound muted' : 'Sound on');
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) {
       if (e.code === 'Space') e.preventDefault();
-    };
-    this._onKeyUp = (e) => this.keys.delete(e.code);
-    this._onMouse = (e) => {
-      if (!this.locked) return;
-      this._targetYaw -= e.movementX * 0.0026;
-      this._targetPitch += e.movementY * 0.0022;
-      if (this._targetPitch < -0.5) this._targetPitch = -0.5;
-      if (this._targetPitch > 1.1) this._targetPitch = 1.1;
-    };
-    this._onDragStart = (e) => {
-      if (this.locked) return;
-      this._dragging = true;
-      this._dragMoved = 0;
-      this._dragX = e.clientX;
-      this._dragY = e.clientY;
-    };
-    this._onDrag = (e) => {
-      if (!this._dragging || this.locked) return;
-      const dx = e.clientX - this._dragX, dy = e.clientY - this._dragY;
-      this._dragMoved += Math.abs(dx) + Math.abs(dy);
-      this._targetYaw -= dx * 0.0026;
-      this._targetPitch += dy * 0.0022;
-      if (this._targetPitch < -0.5) this._targetPitch = -0.5;
-      if (this._targetPitch > 1.1) this._targetPitch = 1.1;
-      this._dragX = e.clientX;
-      this._dragY = e.clientY;
-    };
-    // A press only counts as a weapon click if it barely moved — a
-    // drag-to-look must never fire the gun.
-    this._onDragEnd = () => {
-      if (this._dragging && this._dragMoved < 6 && !this.locked) this.shots++;
-      this._dragging = false;
-    };
-    this._onClick = () => { if (this.locked) this.shots++; };
-    this._onLock = () => { this.locked = document.pointerLockElement === this.canvas; };
-  }
+      return;
+    }
+    switch (e.code) {
+      case 'KeyW':
+      case 'ArrowUp':
+        input.forward = true;
+        break;
+      case 'KeyS':
+      case 'ArrowDown':
+        input.back = true;
+        break;
+      case 'KeyA':
+      case 'ArrowLeft':
+        input.left = true;
+        break;
+      case 'KeyD':
+      case 'ArrowRight':
+        input.right = true;
+        break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        input.run = true;
+        break;
+      case 'Space':
+        input.jump = true;
+        e.preventDefault();
+        break;
+      case 'KeyE':
+        interact();
+        break;
+      case 'KeyR':
+        combat.reload();
+        break;
+      case 'KeyM':
+        toggleMute();
+        break;
+      case 'Escape':
+        togglePause();
+        break;
+      default:
+        break;
+    }
+  });
 
-  attach() {
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('mousemove', this._onMouse);
-    this.canvas.addEventListener('mousedown', this._onClick);
-    this.canvas.addEventListener('mousedown', this._onDragStart);
-    window.addEventListener('mousemove', this._onDrag);
-    window.addEventListener('mouseup', this._onDragEnd);
-    document.addEventListener('pointerlockchange', this._onLock);
-  }
+  window.addEventListener('keyup', (e) => {
+    switch (e.code) {
+      case 'KeyW':
+      case 'ArrowUp':
+        input.forward = false;
+        break;
+      case 'KeyS':
+      case 'ArrowDown':
+        input.back = false;
+        break;
+      case 'KeyA':
+      case 'ArrowLeft':
+        input.left = false;
+        break;
+      case 'KeyD':
+      case 'ArrowRight':
+        input.right = false;
+        break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        input.run = false;
+        break;
+      case 'Space':
+        input.jump = false;
+        break;
+      default:
+        break;
+    }
+  });
 
-  detach() {
-    window.removeEventListener('keydown', this._onKeyDown);
-    window.removeEventListener('keyup', this._onKeyUp);
-    window.removeEventListener('mousemove', this._onMouse);
-    this.canvas.removeEventListener('mousedown', this._onClick);
-    this.canvas.removeEventListener('mousedown', this._onDragStart);
-    window.removeEventListener('mousemove', this._onDrag);
-    window.removeEventListener('mouseup', this._onDragEnd);
-    document.removeEventListener('pointerlockchange', this._onLock);
-  }
+  canvas.addEventListener('click', () => {
+    if (!state.started || state.paused) return;
+    if (!pointerLocked) {
+      try {
+        const p = canvas.requestPointerLock();
+        if (p && p.catch) p.catch(() => {});
+      } catch (err) {
+        // Pointer lock is unavailable (headless); drag look still works.
+      }
+    }
+  });
 
-  down(code) { return this.keys.has(code); }
+  document.addEventListener('pointerlockchange', () => {
+    pointerLocked = document.pointerLockElement === canvas;
+    if (!pointerLocked && state.started && !state.paused) {
+      // Esc in pointer lock exits the lock: treat it as a pause request.
+      togglePause();
+    }
+  });
 
-  /** True once for the frame the key went down; call after reading. */
-  hit(code) { return this.pressed.has(code); }
+  window.addEventListener('mousemove', (e) => {
+    if (pointerLocked) {
+      camYaw -= e.movementX * 0.0028;
+      camPitch = clamp(camPitch + e.movementY * 0.0022, 0.06, 0.85);
+    } else if (dragging) {
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      dragMoved += Math.abs(dx) + Math.abs(dy);
+      camYaw -= dx * 0.004;
+      camPitch = clamp(camPitch + dy * 0.003, 0.06, 0.85);
+      lastX = e.clientX;
+      lastY = e.clientY;
+    }
+  });
 
-  /** Clear edge presses at the end of each frame. */
-  endFrame() { this.pressed.clear(); }
+  canvas.addEventListener('mousedown', (e) => {
+    if (!state.started || state.paused) return;
+    if (pointerLocked) {
+      combat.shoot(camera);
+      return;
+    }
+    dragging = true;
+    dragMoved = 0;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
 
-  takeShots() { const n = this.shots; this.shots = 0; return n; }
+  window.addEventListener('mouseup', () => {
+    if (dragging && dragMoved < 6 && state.started && !state.paused) {
+      // A short click without a drag is a shot.
+      combat.shoot(camera);
+    }
+    dragging = false;
+  });
 
-  /** Ease yaw/pitch toward the mouse targets; call once per frame. */
-  smooth(dt) {
-    this.yaw = dampNum(this.yaw, this._targetYaw, 18, dt);
-    this.pitch = dampNum(this.pitch, this._targetPitch, 18, dt);
-  }
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  lockPointer() {
-    try { this.canvas.requestPointerLock(); } catch (e) { /* mouse look is optional */ }
-  }
-
-  unlockPointer() {
-    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) { /* noop */ }
-  }
+  return {
+    input,
+    get camYaw() {
+      return camYaw;
+    },
+    get camPitch() {
+      return camPitch;
+    },
+    setCamYaw(v) {
+      camYaw = v;
+    },
+    togglePause,
+    toggleMute,
+  };
 }

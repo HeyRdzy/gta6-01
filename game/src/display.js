@@ -1,192 +1,176 @@
-// HUD, minimap and menus for Solmar Heat v3.1. Glass panels, glowing
-// wanted stars, an ammo readout, and a styled minimap with glowing dots
-// and landmark markers. The top-left corner stays clear of text, as the
-// judge's screenshots demand.
+// The HUD: DOM panels, the canvas minimap, toasts and the title/pause
+// screens. The game writes into this module; this module writes into the DOM.
 
-import { angleLerp } from './util.js';
+import { clamp } from './util.js';
 
-// Fixed landmark spots (same numbers world.js builds): gold bank, red
-// diner, blue marina, dark-blue PD — drawn as dots on the minimap.
-const MAP_LANDMARKS = [
-  { x: -21, z: -21, color: '#ffc23b' },
-  { x: 21, z: 63, color: '#ff7a5a' },
-  { x: 105, z: -63, color: '#5ad8ff' },
-  { x: -63, z: 105, color: '#5a8aff' },
-];
+export function createDisplay(state, hero, story, cops, combat) {
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    hud: $('hud'),
+    cash: $('stat-cash'),
+    healthFill: $('health-fill'),
+    healthNum: $('health-num'),
+    stars: $('stars'),
+    ammo: $('stat-ammo'),
+    speed: $('stat-speed'),
+    objective: $('objective'),
+    minimap: $('minimap'),
+    toast: $('toast'),
+    title: $('screen-title'),
+    pause: $('screen-pause'),
+    vignette: $('vignette'),
+    muteBtn: $('btn-mute'),
+  };
+  const mapCtx = el.minimap.getContext('2d');
+  let toastTimer = null;
 
-export class Display {
-  constructor(doc) {
-    this.doc = doc;
-    this.el = {};
-    const ids = ['panel-stats', 'stat-cash', 'stat-stars', 'stat-health-bar', 'stat-health-fill', 'stat-health-num',
-      'stat-clock', 'stat-speed', 'stat-ammo', 'panel-objective', 'panel-toast', 'panel-subtitle',
-      'map-canvas', 'screen-title', 'screen-pause', 'screen-dead', 'btn-start',
-      'btn-continue', 'btn-resume', 'btn-quit', 'btn-mute', 'btn-respawn',
-      'hud', 'crosshair', 'vignette', 'hint-bar'];
-    for (const id of ids) this.el[id] = doc.getElementById(id);
-    this.map = this.el['map-canvas'].getContext('2d');
-    this.toastT = 0;
-    this.subT = 0;
-    this._starPulse = 0;
-    this._arrowAngle = 0;
-  }
+  const display = {
+    say(text) {
+      el.objective.textContent = text;
+    },
 
-  showPlay() {
-    this.el['hud'].style.display = 'block';
-    this.el['screen-title'].style.display = 'none';
-    this.el['screen-pause'].style.display = 'none';
-    this.el['screen-dead'].style.display = 'none';
-    this.el['crosshair'].style.display = 'block';
-  }
+    toast(text) {
+      el.toast.textContent = text;
+      el.toast.style.opacity = '1';
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.toast.style.opacity = '0';
+      }, 2600);
+    },
 
-  showTitle(canContinue) {
-    this.el['hud'].style.display = 'none';
-    this.el['screen-title'].style.display = 'flex';
-    this.el['screen-pause'].style.display = 'none';
-    this.el['screen-dead'].style.display = 'none';
-    this.el['btn-continue'].style.display = canContinue ? 'inline-block' : 'none';
-  }
+    showTitle() {
+      el.title.style.display = 'flex';
+      el.hud.style.display = 'none';
+      el.pause.style.display = 'none';
+    },
 
-  showPause(muted) {
-    this.el['screen-pause'].style.display = 'flex';
-    this.el['btn-mute'].textContent = muted ? 'Sound: Off' : 'Sound: On';
-  }
+    showHud() {
+      el.title.style.display = 'none';
+      el.hud.style.display = 'block';
+      el.pause.style.display = 'none';
+    },
 
-  hidePause() { this.el['screen-pause'].style.display = 'none'; }
+    showPause() {
+      el.pause.style.display = 'flex';
+    },
 
-  showDead() {
-    this.el['screen-dead'].style.display = 'flex';
-    this.el['hud'].style.display = 'none';
-  }
+    hidePause() {
+      el.pause.style.display = 'none';
+    },
 
-  toast(text, secs = 3) {
-    this.el['panel-toast'].textContent = text;
-    this.el['panel-toast'].style.opacity = '1';
-    this.toastT = secs;
-  }
+    update(dt, timeSec) {
+      el.cash.textContent = `$${state.cash}`;
+      const hp = clamp(state.health / state.maxHealth, 0, 1);
+      el.healthFill.style.width = `${hp * 100}%`;
+      el.healthFill.style.background = hp > 0.5 ? '#3ddc5a' : hp > 0.25 ? '#ffc21a' : '#ff3b30';
+      el.healthNum.textContent = `${Math.ceil(state.health)}`;
+      let stars = '';
+      for (let i = 0; i < 5; i++) stars += i < state.wanted ? '★' : '☆';
+      el.stars.textContent = stars;
+      el.stars.style.textShadow = state.wanted > 0 ? '0 0 12px #ff5c5c, 0 0 24px #ff5c5c' : 'none';
+      el.stars.style.color = state.wanted > 0 ? '#ff6a5c' : '#cfd6dd';
+      el.ammo.textContent = combat.reloading ? 'RELOADING…' : `AMMO ${combat.ammo} / ${combat.maxAmmo}`;
+      el.speed.textContent = hero.driving ? `${Math.round(Math.abs(hero.speed) * 2.2)} mph` : '';
+      if (state.health < 35) {
+        el.vignette.style.opacity = String(0.55 - state.health / 100);
+      } else {
+        el.vignette.style.opacity = '0';
+      }
+      drawMinimap(timeSec);
+    },
+  };
 
-  say(text, secs = 6) {
-    this.el['panel-subtitle'].textContent = text;
-    this.el['panel-subtitle'].style.opacity = '1';
-    this.subT = secs;
-  }
-
-  update(dt, state, hero, story, cops, combat) {
-    this.el['stat-cash'].textContent = '$' + state.cash.toLocaleString('en-US');
-    const stars = state.stars();
-    this.el['stat-stars'].textContent = '★'.repeat(stars) + '☆'.repeat(5 - stars);
-    this._starPulse += dt;
-    const glow = stars > 0 ? 0.7 + Math.sin(this._starPulse * 6) * 0.3 : 0;
-    this.el['stat-stars'].style.color = stars > 0 ? '#ff5a4a' : '#f5efe2';
-    this.el['stat-stars'].style.textShadow = stars > 0
-      ? `0 0 ${10 + glow * 10}px rgba(255,60,40,${0.6 + glow * 0.4})` : '0 1px 4px rgba(0,0,0,.8)';
-    // The whole stats panel flushes red while wanted, so the heat reads
-    // even in a shrunken screenshot.
-    this.el['panel-stats'].style.borderColor = stars > 0
-      ? `rgba(255,90,74,${0.55 + glow * 0.35})` : 'rgba(255,255,255,.16)';
-    this.el['stat-health-fill'].style.width = state.health + '%';
-    this.el['stat-health-fill'].style.background = state.health < 30
-      ? 'linear-gradient(90deg,#c23b2e,#ff6a5a)'
-      : 'linear-gradient(90deg,#57b25e,#8be08b)';
-    this.el['stat-health-num'].textContent = Math.ceil(state.health) + ' HP';
-    this.el['stat-clock'].textContent = state.clockText();
-    this.el['stat-speed'].textContent = hero.driving
-      ? Math.round(Math.abs(hero.speed) * 3.2) + ' mph' + (hero.driving.damage >= 60 ? '  — SMOKING' : '')
-      : '';
-    if (combat) {
-      this.el['stat-ammo'].textContent = hero.driving
-        ? ''
-        : (combat.reloading > 0 ? 'RELOADING…' : `AMMO ${combat.ammo} / 12`);
-      this.el['stat-ammo'].style.color = combat.ammo <= 3 && combat.reloading <= 0 ? '#ff8a7a' : '#ffd98a';
+  function drawMinimap(timeSec) {
+    const W = 180;
+    const H = 180;
+    const s = W / 400; // world -200..200 maps to 0..180
+    const px = (x) => (x + 200) * s;
+    const pz = (z) => (z + 200) * s;
+    const g = mapCtx;
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = '#10151c';
+    g.fillRect(0, 0, W, H);
+    // Sea and sand on the east edge.
+    g.fillStyle = '#1e5f7a';
+    g.fillRect(px(182), 0, W - px(182), H);
+    g.fillStyle = '#d9b98a';
+    g.fillRect(px(150), 0, px(182) - px(150), H);
+    // Park in the south-west.
+    g.fillStyle = '#2f5a34';
+    g.fillRect(px(-180), pz(30), px(-30) - px(-180), pz(180) - pz(30));
+    // Streets.
+    g.strokeStyle = 'rgba(200,205,210,0.5)';
+    g.lineWidth = 1;
+    g.setLineDash([4, 3]);
+    for (let v = -180; v <= 180; v += 30) {
+      g.beginPath();
+      g.moveTo(px(v), 0);
+      g.lineTo(px(v), H);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(0, pz(v));
+      g.lineTo(W, pz(v));
+      g.stroke();
     }
-    this.el['panel-objective'].textContent = story.title() + '  ·  ' + story.objective();
-    if (this.toastT > 0) {
-      this.toastT -= dt;
-      if (this.toastT <= 0) this.el['panel-toast'].style.opacity = '0';
-    }
-    if (this.subT > 0) {
-      this.subT -= dt;
-      if (this.subT <= 0) this.el['panel-subtitle'].style.opacity = '0';
-    }
-    const low = state.health < 30 ? 0.9 : state.health < 55 ? 0.45 : 0;
-    this.el['vignette'].style.opacity = String(low);
-    this._drawMap(hero, cops, story);
-  }
-
-  _drawMap(hero, cops, story) {
-    const g = this.map, S = 190, half = 150;
-    const toMap = (x, z) => [(x + half) / (half * 2) * S, (z + half) / (half * 2) * S];
-    g.clearRect(0, 0, S, S);
-    // Dark glass base with a soft vignette.
-    g.fillStyle = '#232019';
-    g.fillRect(0, 0, S, S);
-    const vg = g.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S * 0.75);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.45)');
-    // Sea + sand on the east edge, park south-west.
-    g.fillStyle = '#166a8c';
-    g.fillRect(S * 0.92, 0, S * 0.08, S);
-    g.fillStyle = '#ddbd85';
-    g.fillRect(S * 0.86, 0, S * 0.06, S);
-    g.fillStyle = '#3f6a33';
-    g.fillRect(S * 0.08, S * 0.72, S * 0.25, S * 0.25);
-    // Streets: pale lines with a centre dash.
-    g.strokeStyle = '#8a8474';
-    g.lineWidth = 4;
-    g.lineCap = 'round';
-    for (let i = -3; i <= 3; i++) {
-      const [px] = toMap(i * 42, 0);
-      g.beginPath(); g.moveTo(px, 0); g.lineTo(px, S); g.stroke();
-      const [, pz] = toMap(0, i * 42);
-      g.beginPath(); g.moveTo(0, pz); g.lineTo(S, pz); g.stroke();
-    }
-    // Landmark dots: bank, diner, marina, PD — the city reads at a glance.
-    for (const lm of MAP_LANDMARKS) {
-      const [lx, lz] = toMap(lm.x, lm.z);
+    g.setLineDash([]);
+    // Landmarks.
+    for (const lm of story.landmarks || []) {
       g.fillStyle = lm.color;
-      g.shadowColor = lm.color;
-      g.shadowBlur = 6;
-      g.fillRect(lx - 2.5, lz - 2.5, 5, 5);
+      g.beginPath();
+      g.arc(px(lm.x), pz(lm.z), 2.5, 0, Math.PI * 2);
+      g.fill();
     }
-    g.shadowBlur = 0;
-    // Waypoint: pulsing gold ring.
-    const wp = story.waypoint();
+    // Objective waypoint, pulsing gold.
+    const wp = story.objectivePoint();
     if (wp) {
-      const [wx, wz] = toMap(wp.x, wp.z);
-      const pr = 5 + Math.sin(performance.now() / 220) * 2;
-      g.fillStyle = '#ffc23b';
-      g.shadowColor = '#ffc23b';
-      g.shadowBlur = 10;
-      g.beginPath(); g.arc(wx, wz, pr, 0, Math.PI * 2); g.fill();
-      g.shadowBlur = 0;
+      const pulse = 4 + Math.sin(timeSec * 4) * 1.6;
+      g.fillStyle = '#ffc21a';
+      g.beginPath();
+      g.arc(px(wp.x), pz(wp.z), pulse, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = 'rgba(255,194,26,0.6)';
+      g.beginPath();
+      g.arc(px(wp.x), pz(wp.z), pulse + 4, 0, Math.PI * 2);
+      g.stroke();
     }
-    // Police: glowing blue dots.
-    g.fillStyle = '#5aa0ff';
-    g.shadowColor = '#2a6aff';
-    g.shadowBlur = 8;
-    for (const c of cops.cars) {
-      const [cx, cz] = toMap(c.mesh.position.x, c.mesh.position.z);
-      g.beginPath(); g.arc(cx, cz, 4, 0, Math.PI * 2); g.fill();
+    // Cops as blue dots.
+    g.fillStyle = '#5aa2ff';
+    for (const c of cops.cruisers) {
+      g.beginPath();
+      g.arc(px(c.mesh.position.x), pz(c.mesh.position.z), 3, 0, Math.PI * 2);
+      g.fill();
     }
-    g.shadowBlur = 0;
-    // Player arrow with a white halo; the heading eases instead of
-    // snapping so the arrow stops jittering on the minimap.
-    const [px, pz] = toMap(hero.x, hero.z);
-    this._arrowAngle = angleLerp(this._arrowAngle, Math.atan2(Math.sin(hero.heading), Math.cos(hero.heading)) + Math.PI, 0.35);
-    g.save();
-    g.translate(px, pz);
-    g.rotate(this._arrowAngle);
+    // Rivals as red dots.
+    g.fillStyle = '#ff4a3a';
+    for (const r of combat.rivals) {
+      if (r.dead) continue;
+      g.beginPath();
+      g.arc(px(r.x), pz(r.z), 2.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    // Player arrow with a halo.
+    const hx = px(hero.x);
+    const hz = pz(hero.z);
     g.fillStyle = 'rgba(255,255,255,0.35)';
-    g.beginPath(); g.arc(0, 0, 9, 0, Math.PI * 2); g.fill();
-    g.fillStyle = hero.driving ? '#ffb347' : '#ffffff';
-    g.beginPath(); g.moveTo(0, -8); g.lineTo(5, 6); g.lineTo(-5, 6); g.closePath(); g.fill();
+    g.beginPath();
+    g.arc(hx, hz, 7, 0, Math.PI * 2);
+    g.fill();
+    g.save();
+    g.translate(hx, hz);
+    g.rotate(Math.PI - hero.heading);
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.moveTo(0, -6);
+    g.lineTo(4.5, 5);
+    g.lineTo(-4.5, 5);
+    g.closePath();
+    g.fill();
     g.restore();
-    g.fillStyle = vg;
-    g.fillRect(0, 0, S, S);
-    // North tick.
-    g.fillStyle = '#ffd98a';
-    g.font = 'bold 11px Trebuchet MS, Verdana, sans-serif';
-    g.textAlign = 'right';
-    g.fillText('N', S - 6, 13);
+    // Border.
+    g.strokeStyle = state.wanted > 0 ? '#ff5c5c' : 'rgba(255,255,255,0.25)';
+    g.lineWidth = 2;
+    g.strokeRect(1, 1, W - 2, H - 2);
   }
+
+  return display;
 }

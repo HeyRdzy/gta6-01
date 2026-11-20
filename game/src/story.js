@@ -1,356 +1,259 @@
-// Story for Solmar Heat v3: five jobs from fixer Mara Voss, plus two ways
-// to earn on the side — taxi fares and beach stunt jumps. Each job is a
-// chain of steps (go somewhere, hold a spot, survive, clear the rivals);
-// the waypoint beacon always points at the next one. Markers glow now:
-// the beacon pulses gold, packages shine, ramps wear chevrons.
+// Mara Voss's five jobs, the gold beacon that marks them, taxi fares and
+// stunt ramps. Missions run in order; each step is a goto, a fight or an
+// escape, and finishing one pays out and unlocks the next.
 
 import * as THREE from 'three';
-import { flatDist } from './util.js';
-import { glowTexture } from './visuals.js';
+import { glowTexture, stdMat, unitBox, unitCylinder } from './visuals.js';
+import { clamp, dist2d, range } from './util.js';
 
-const JOBS = [
+export const MISSION_DEFS = [
   {
-    name: 'Sunset Courier', pay: 300,
-    brief: 'Mara Voss: Rosa needs a parcel at the marina before dark. Fast feet, faster car.',
+    name: 'Sunset Courier',
+    payout: 300,
+    intro: 'Mara: take this package to the marina. No detours, no questions.',
+    start: { x: 30, z: 60 },
+    steps: [{ type: 'goto', x: 150, z: 30, r: 6, label: 'Deliver the package to the marina' }],
+  },
+  {
+    name: 'Getaway Driver',
+    payout: 500,
+    intro: 'Mara: the crew is hot. Shake the cops and reach the north garage.',
+    start: { x: -30, z: 30 },
+    steps: [{ type: 'goto', x: -120, z: -120, r: 6, label: 'Lose the cops, reach the north garage' }],
+    wanted: 2,
+  },
+  {
+    name: 'Package Run',
+    payout: 400,
+    intro: 'Mara: two drops tonight. Dockyard gate first, then back to me.',
+    start: { x: 60, z: -60 },
     steps: [
-      { kind: 'goto', label: 'Pick up the parcel at Rosa\u2019s Diner', x: 21, z: 63 },
-      { kind: 'goto', label: 'Deliver it to the Marina Office', x: 105, z: -63, time: 80 },
+      { type: 'goto', x: 120, z: 120, r: 6, label: 'Drop the package at the dockyard gate' },
+      { type: 'goto', x: 60, z: -60, r: 6, label: 'Get back to Mara' },
     ],
   },
   {
-    name: 'Getaway Driver', pay: 500,
-    brief: 'Mara Voss: I torched a deal and the PD is coming. Get in a car and stay gone for 40 seconds.',
+    name: 'Dockyard Standoff',
+    payout: 700,
+    intro: 'Mara: the dock crew took our crate. Take it back, all of it.',
+    start: { x: 120, z: 120 },
     steps: [
-      { kind: 'survive', label: 'Lose the cops — survive 40 seconds', time: 40, heat: 55 },
+      { type: 'kill', count: 4, x: 135, z: 135, label: 'Clear the dockyard crew (4 left)' },
+      { type: 'goto', x: 120, z: 90, r: 6, label: 'Grab the crate and leave the yard' },
     ],
   },
   {
-    name: 'Package Run', pay: 400,
-    brief: 'Mara Voss: Five packages, five corners of the bay. No questions, no stops.',
+    name: 'The Solmar Heist',
+    payout: 1500,
+    intro: 'Mara: tonight we take the vault. Get in, hold it, get out to the pier.',
+    start: { x: -60, z: -60 },
     steps: [
-      { kind: 'collect', label: 'Collect the packages (0/5)', count: 5 },
-    ],
-  },
-  {
-    name: 'Dockyard Standoff', pay: 700,
-    brief: 'Mara Voss: The Kestrel crew is waiting at the docks. Clear them out.',
-    steps: [
-      { kind: 'goto', label: 'Reach the docks', x: 105, z: -84 },
-      { kind: 'kill', label: 'Clear the Kestrel crew', spots: [[98, -92], [112, -76], [104, -98], [118, -88]] },
-    ],
-  },
-  {
-    name: 'The Solmar Heist', pay: 1500,
-    brief: 'Mara Voss: One last job. Crack the Solmar Trust vault, then run for the pier.',
-    steps: [
-      { kind: 'goto', label: 'Reach the Solmar Trust Bank', x: -21, z: -21 },
-      { kind: 'hold', label: 'Crack the vault — stay inside 12 seconds', x: -21, z: -21, time: 12, heat: 70 },
-      { kind: 'goto', label: 'Escape to the pier', x: 144, z: -40 },
+      { type: 'goto', x: 135, z: 150, r: 6, label: 'Reach the dockyard vault' },
+      { type: 'kill', count: 3, x: 135, z: 150, label: 'Hold the vault (3 left)' },
+      { type: 'goto', x: 165, z: 0, r: 7, label: 'Escape to Pier 9' },
     ],
   },
 ];
 
-const PACKAGE_SPOTS = [[-84, -84], [42, -84], [-42, 42], [84, 84], [0, -126]];
-const TAXI_DROPS = [[-21, -21], [21, 63], [105, -63], [-63, 105], [0, 96]];
+export function createStory(scene, hero, combat, state, display, sound) {
+  // Slim gold beacon: a short column, a ground ring and a halo sprite.
+  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffc21a, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  const beacon = new THREE.Mesh(unitCylinder(16), beaconMat);
+  beacon.scale.set(1.05, 26, 1.05);
+  beacon.position.set(30, 13, 60);
+  scene.add(beacon);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffc21a, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.2, 24), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(30, 0.06, 60);
+  scene.add(ring);
+  const halo = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffc21a, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending })
+  );
+  halo.scale.set(6, 6, 1);
+  halo.position.set(30, 2, 60);
+  scene.add(halo);
 
-function chevronTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#8a5a2a';
-  g.fillRect(0, 0, 128, 128);
-  g.fillStyle = '#ffc23b';
-  for (let y = 8; y < 128; y += 32) {
-    g.beginPath();
-    g.moveTo(24, y); g.lineTo(64, y + 16); g.lineTo(104, y);
-    g.lineTo(104, y + 10); g.lineTo(64, y + 26); g.lineTo(24, y + 10);
-    g.closePath(); g.fill();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
+  // Taxi fare marker.
+  const fareHalo = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowTexture(), color: 0x51ff7a, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+  );
+  fareHalo.scale.set(5, 5, 1);
+  scene.add(fareHalo);
+  let fare = null;
+  let fareCooldown = 0;
 
-export class Story {
-  constructor(scene, bay, state, combat) {
-    this.scene = scene;
-    this.bay = bay;
-    this.state = state;
-    this.combat = combat;
-    this.jobIndex = 0;
-    this.stepIndex = 0;
-    this.active = null;
-    this.packages = [];
-    this.taxi = { state: 'idle', pickup: null, drop: null, fare: 0, wait: 6 };
-    this.stuntCooldown = 0;
-    this._glowTex = glowTexture('rgba(255,194,59,0.9)', 'rgba(255,194,59,0)');
-
-    // Gold waypoint beacon: a slim pulsing column with a halo at its
-    // foot. Slim on purpose — a fat column reads as a wall in screenshots.
-    // It hides entirely on kill steps, where there is no waypoint and a
-    // column at Rio's feet would only block the fight.
-    this.beacon = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.05, 1.05, 26, 12, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffc23b, transparent: true, opacity: 0.24, side: THREE.DoubleSide, depthWrite: false }),
-    );
-    this.beacon.visible = false;
-    scene.add(this.beacon);
-    this.beaconHalo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: this._glowTex, transparent: true, opacity: 0.6, depthWrite: false,
-    }));
-    this.beaconHalo.scale.set(12, 12, 1);
-    this.beaconHalo.visible = false;
-    scene.add(this.beaconHalo);
-    this.ring = new THREE.Mesh(
-      new THREE.TorusGeometry(3, 0.3, 8, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffc23b }),
-    );
-    this.ring.rotation.x = Math.PI / 2;
-    this.ring.visible = false;
-    scene.add(this.ring);
-
-    // Package crates: gold, emissive, with a halo so they read at dusk.
-    for (const [x, z] of PACKAGE_SPOTS) {
-      const m = new THREE.Mesh(
-        new THREE.BoxGeometry(1.5, 1.5, 1.5),
-        new THREE.MeshStandardMaterial({ color: 0xffc23b, emissive: 0xa87800, emissiveIntensity: 0.55, roughness: 0.5 }),
-      );
-      m.position.set(x, 0.9, z);
-      m.visible = false;
-      m.castShadow = true;
-      scene.add(m);
-      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: this._glowTex, transparent: true, opacity: 0.5, depthWrite: false,
-      }));
-      halo.scale.set(5, 5, 1);
-      halo.position.set(x, 1.4, z);
-      halo.visible = false;
-      scene.add(halo);
-      this.packages.push({ mesh: m, halo, x, z, taken: false });
-    }
-
-    // Stunt ramps on the beach, chevron-striped.
-    this.ramps = [];
-    const rampTex = chevronTexture();
-    for (const z of [-60, 0, 60]) {
-      const ramp = new THREE.Mesh(
-        new THREE.BoxGeometry(6, 1, 10),
-        new THREE.MeshStandardMaterial({ map: rampTex, roughness: 0.85 }),
-      );
-      ramp.position.set(112, 0.8, z);
-      ramp.rotation.z = -0.35;
-      ramp.castShadow = true;
-      scene.add(ramp);
-      this.ramps.push({ x: 112, z, usedAt: -99 });
-    }
-
-    // Taxi fare marker: slim like the beacon, green instead of gold.
-    this.fareMark = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.9, 0.9, 14, 10, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x2ee6a8, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }),
-    );
-    this.fareMark.visible = false;
-    scene.add(this.fareMark);
-    this.fareHalo = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: glowTexture('rgba(46,230,168,0.9)', 'rgba(46,230,168,0)'), transparent: true, opacity: 0.55, depthWrite: false,
-    }));
-    this.fareHalo.scale.set(10, 10, 1);
-    this.fareHalo.visible = false;
-    scene.add(this.fareHalo);
+  // Stunt ramps: chevron wedges that pay for air.
+  const ramps = [];
+  const rampMat = stdMat('ramp', () => new THREE.MeshStandardMaterial({ color: 0xd8a23a, roughness: 0.7 }));
+  const chevMat = stdMat('chev', () => new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 }));
+  for (const [rx, rz, ry] of [[-45, 0, 0], [45, -120, Math.PI / 2], [105, 30, -Math.PI / 2]]) {
+    const ramp = new THREE.Group();
+    const wedge = new THREE.Mesh(unitBox(), rampMat);
+    wedge.scale.set(6, 1.2, 4);
+    wedge.position.y = 0.6;
+    wedge.rotation.z = 0.28;
+    wedge.castShadow = true;
+    ramp.add(wedge);
+    const chev = new THREE.Mesh(unitBox(), chevMat);
+    chev.scale.set(0.5, 0.5, 4.1);
+    chev.position.set(-2.2, 1.35, 0);
+    chev.rotation.z = 0.28;
+    ramp.add(chev);
+    ramp.position.set(rx, 0, rz);
+    ramp.rotation.y = ry;
+    scene.add(ramp);
+    ramps.push({ x: rx, z: rz, cooldown: 0 });
   }
 
-  currentJob() { return JOBS[this.jobIndex] || null; }
+  const story = {
+    active: null,
+    beacon,
+    ring,
+    halo,
 
-  title() {
-    if (!this.active) {
-      const j = this.currentJob();
-      return j ? 'Next job: ' + j.name + ' — press E near the gold M' : 'All jobs done — Solmar Bay is yours';
-    }
-    return this.active.def.name;
-  }
+    nextDef() {
+      return MISSION_DEFS[state.missionsDone] ?? null;
+    },
 
-  objective() {
-    if (!this.active) return 'Follow the gold M to start your next job';
-    const step = this.active.def.steps[this.stepIndex];
-    if (!step) return '';
-    if (step.kind === 'collect') return `Collect the packages (${this.active.collected}/5)`;
-    if (step.kind === 'survive') return `Lose the cops — ${Math.ceil(this.active.timer)}s left`;
-    if (step.kind === 'hold') return `Crack the vault — ${Math.ceil(this.active.timer)}s left`;
-    return step.label;
-  }
-
-  waypoint() {
-    if (!this.active) return null;
-    const step = this.active.def.steps[this.stepIndex];
-    if (!step) return null;
-    if (step.kind === 'collect') {
-      const next = this.packages.find((p) => !p.taken);
-      return next ? { x: next.x, z: next.z } : null;
-    }
-    if (step.kind === 'survive' || step.kind === 'kill') return null;
-    return { x: step.x, z: step.z };
-  }
-
-  startNext(events) {
-    const job = this.currentJob();
-    if (!job) return false;
-    this.active = { def: job, timer: 0, collected: 0 };
-    this.stepIndex = 0;
-    this._enterStep(events);
-    return true;
-  }
-
-  _enterStep(events) {
-    const step = this.active.def.steps[this.stepIndex];
-    if (!step) return;
-    if (step.kind === 'survive' || step.kind === 'hold') this.active.timer = step.time;
-    if (step.kind === 'hold' && step.heat) this.state.addHeat(step.heat);
-    if (step.kind === 'survive' && step.heat) this.state.addHeat(step.heat);
-    if (step.kind === 'collect') {
-      for (const p of this.packages) { p.taken = false; p.mesh.visible = true; p.halo.visible = true; }
-      this.active.collected = 0;
-    }
-    if (step.kind === 'kill') this.combat.spawnRivals(step.spots);
-    if (events) events.say(this.active.def.brief);
-  }
-
-  _advance(events) {
-    this.stepIndex++;
-    const job = this.active.def;
-    if (this.stepIndex >= job.steps.length) {
-      this.state.addCash(job.pay);
-      this.state.missionsDone++;
-      if (events) {
-        events.toast(`Job complete: ${job.name} — +$${job.pay}`);
-        events.say(`Mara Voss: ${job.name} done. $${job.pay} is yours.`);
+    startNext(displayApi) {
+      const def = story.nextDef();
+      if (!def) {
+        displayApi.toast('All jobs done — Solmar Bay is yours, free roam');
+        return false;
       }
-      this.jobIndex++;
-      this.active = null;
-      this.beacon.visible = false;
-      this.beaconHalo.visible = false;
-      this.ring.visible = false;
-      this.combat.clearRivals();
-      return;
-    }
-    this._enterStep(events);
-  }
+      story.active = { def, stepIdx: 0, killsAtStart: state.kills };
+      displayApi.say(def.intro);
+      displayApi.toast(`Job started: ${def.name} — $${def.payout}`);
+      sound.chime();
+      if (def.wanted) state.addWanted(def.wanted);
+      story.placeBeacon();
+      const step = def.steps[0];
+      if (step.type === 'kill') combat.spawnRivals(step.x, step.z, step.count);
+      return true;
+    },
 
-  update(dt, hero, now, events) {
-    // Waypoint beacon follows the current step, pulsing as it goes.
-    // Kill steps have no waypoint: the beacon stays hidden so the fight
-    // reads clean, and the ring parks out of sight too.
-    const wp = this.waypoint();
-    const pulse = 0.2 + Math.sin(now * 3) * 0.08;
-    const killStep = this.active && this.active.def.steps[this.stepIndex]
-      && this.active.def.steps[this.stepIndex].kind === 'kill';
-    if (wp && !killStep) {
-      this.beacon.visible = true;
-      this.beaconHalo.visible = true;
-      this.ring.visible = true;
-      this.beacon.material.opacity = pulse;
-      this.beacon.position.set(wp.x, 13, wp.z);
-      this.beaconHalo.position.set(wp.x, 2, wp.z);
-      this.ring.position.set(wp.x, 0.3 + Math.sin(now * 2) * 0.2, wp.z);
-      const rs = 1 + Math.sin(now * 2) * 0.12;
-      this.ring.scale.set(rs, rs, 1);
-    } else {
-      this.beacon.visible = !!this.active && !killStep;
-      this.beaconHalo.visible = !!this.active && !killStep;
-      this.ring.visible = false;
-      if (this.active && !killStep) {
-        this.beacon.material.opacity = pulse;
-        this.beacon.position.set(hero.x, 13, hero.z);
-        this.beaconHalo.position.set(hero.x, 2, hero.z);
+    placeBeacon() {
+      const target = story.objectivePoint();
+      if (!target) {
+        beacon.visible = false;
+        ring.visible = false;
+        halo.visible = false;
+        return;
       }
-    }
+      const step = story.active ? story.active.def.steps[story.active.stepIdx] : null;
+      const isKill = step && step.type === 'kill';
+      beacon.visible = !isKill;
+      ring.visible = true;
+      halo.visible = true;
+      beacon.position.set(target.x, 13, target.z);
+      ring.position.set(target.x, 0.06, target.z);
+      halo.position.set(target.x, 2, target.z);
+    },
 
-    // Package crates bob gently so they catch the eye at dusk.
-    for (let i = 0; i < this.packages.length; i++) {
-      const p = this.packages[i];
-      if (p.mesh.visible) p.mesh.position.y = 0.9 + Math.sin(now * 2 + i * 1.3) * 0.15;
-    }
+    objectivePoint() {
+      if (story.active) {
+        const step = story.active.def.steps[story.active.stepIdx];
+        return { x: step.x, z: step.z };
+      }
+      const def = story.nextDef();
+      return def ? { x: def.start.x, z: def.start.z } : null;
+    },
 
-    if (this.active) {
-      const step = this.active.def.steps[this.stepIndex];
-      if (step.kind === 'goto') {
-        if (flatDist(hero.x, hero.z, step.x, step.z) < 5) {
-          if (step.time && this.active.timer <= 0) this.active.timer = step.time;
-          this._advance(events);
-        } else if (step.time) {
-          this.active.timer -= dt;
-          if (this.active.timer <= 0) {
-            if (events) events.toast('Too slow — the job fell through');
-            this.active = null;
-            this.beacon.visible = false;
-            this.beaconHalo.visible = false;
+    objectiveLabel() {
+      if (story.active) {
+        const step = story.active.def.steps[story.active.stepIdx];
+        if (step.type === 'kill') {
+          const left = step.count - (state.kills - story.active.killsAtStart);
+          return `${step.label.split('(')[0].trim()} (${Math.max(0, left)} left)`;
+        }
+        return step.label;
+      }
+      const def = story.nextDef();
+      return def ? `Next job: ${def.name} — $${def.payout} (walk to the gold beacon)` : 'All jobs done — free roam';
+    },
+
+    update(dt) {
+      // Beacon idle motion.
+      const t = performance.now() / 1000;
+      ring.scale.setScalar(1 + Math.sin(t * 2.4) * 0.12);
+      halo.material.opacity = 0.45 + Math.sin(t * 2.4) * 0.18;
+
+      if (story.active) {
+        const step = story.active.def.steps[story.active.stepIdx];
+        let done = false;
+        if (step.type === 'goto') {
+          done = dist2d(hero.x, hero.z, step.x, step.z) < step.r;
+        } else if (step.type === 'kill') {
+          done = state.kills - story.active.killsAtStart >= step.count;
+        }
+        if (done) {
+          story.active.stepIdx++;
+          if (story.active.stepIdx >= story.active.def.steps.length) {
+            const def = story.active.def;
+            state.addCash(def.payout);
+            state.missions[def === MISSION_DEFS[0] ? 0 : MISSION_DEFS.indexOf(def)] = true;
+            state.missionsDone++;
+            state.save();
+            display.toast(`Job complete: ${def.name} — +$${def.payout}`);
+            sound.chime();
+            combat.clearRivals();
+            story.active = null;
+            story.placeBeacon();
+          } else {
+            const next = story.active.def.steps[story.active.stepIdx];
+            display.say(next.label);
+            if (next.type === 'kill') {
+              story.active.killsAtStart = state.kills;
+              combat.spawnRivals(next.x, next.z, next.count);
+            }
+            story.placeBeacon();
           }
         }
-      } else if (step.kind === 'collect') {
-        for (const p of this.packages) {
-          if (!p.taken && flatDist(hero.x, hero.z, p.x, p.z) < 3.5) {
-            p.taken = true; p.mesh.visible = false; p.halo.visible = false;
-            this.active.collected++;
-            this.state.addCash(40);
-            if (events) events.toast(`Package ${this.active.collected}/5 — +$40`);
-          }
-        }
-        if (this.active.collected >= step.count) this._advance(events);
-      } else if (step.kind === 'survive') {
-        this.active.timer -= dt;
-        if (this.active.timer <= 0) this._advance(events);
-      } else if (step.kind === 'kill') {
-        if (this.combat.rivalsLeft() === 0) this._advance(events);
-      } else if (step.kind === 'hold') {
-        if (flatDist(hero.x, hero.z, step.x, step.z) < 7) {
-          this.active.timer -= dt;
-          if (this.active.timer <= 0) this._advance(events);
-        }
       }
-    }
 
-    // --- Taxi fares and stunt jumps -----------------------------------------
-    this.stuntCooldown -= dt;
-    if (hero.driving) {
-      const speed = Math.abs(hero.speed);
-      for (const r of this.ramps) {
-        if (speed > 24 && flatDist(hero.x, hero.z, r.x, r.z) < 6 && now - r.usedAt > 30) {
-          r.usedAt = now;
-          this.state.addCash(80);
-          this.state.stuntsDone++;
-          if (events) events.toast('Stunt jump! +$80');
+      // Taxi fares.
+      fareCooldown -= dt;
+      if (hero.driving && hero.car && hero.car.taxi) {
+        if (!fare && fareCooldown <= 0) {
+          const a = Math.random() * Math.PI * 2;
+          const d = 45 + Math.random() * 40;
+          fare = {
+            x: clamp(hero.x + Math.sin(a) * d, -170, 170),
+            z: clamp(hero.z + Math.cos(a) * d, -170, 170),
+          };
+          fareHalo.position.set(fare.x, 2, fare.z);
+          fareHalo.material.opacity = 0.8;
+          display.toast('New fare — drop them at the green marker');
+        }
+        if (fare && dist2d(hero.x, hero.z, fare.x, fare.z) < 6) {
+          const pay = 20 + Math.floor(Math.random() * 21);
+          state.addCash(pay);
+          state.fares++;
+          display.toast(`Fare paid +$${pay}`);
+          sound.chime();
+          fare = null;
+          fareCooldown = 4;
+          fareHalo.material.opacity = 0;
+        }
+      } else if (fare) {
+        fare = null;
+        fareHalo.material.opacity = 0;
+      }
+
+      // Stunt ramps.
+      for (const r of ramps) {
+        r.cooldown -= dt;
+        if (hero.driving && r.cooldown <= 0 && dist2d(hero.x, hero.z, r.x, r.z) < 4.5 && Math.abs(hero.speed) > 15) {
+          r.cooldown = 8;
+          state.addCash(50);
+          display.toast('STUNT +$50');
+          sound.chime();
         }
       }
-    }
-    if (this.taxi.state === 'idle') {
-      this.taxi.wait -= dt;
-      if (this.taxi.wait <= 0 && hero.driving) {
-        const px = -84 + Math.floor(Math.random() * 5) * 42;
-        const pz = -84 + Math.floor(Math.random() * 5) * 42;
-        this.taxi = { state: 'pickup', pickup: { x: px, z: pz }, drop: null, fare: 60 + Math.floor(Math.random() * 7) * 10, wait: 0 };
-        this.fareMark.visible = true;
-        this.fareHalo.visible = true;
-        this.fareMark.position.set(px, 7, pz);
-        this.fareHalo.position.set(px, 1.5, pz);
-        if (events) events.toast('Taxi fare waiting — green beacon');
-      }
-    } else if (this.taxi.state === 'pickup') {
-      if (flatDist(hero.x, hero.z, this.taxi.pickup.x, this.taxi.pickup.z) < 5) {
-        const drop = TAXI_DROPS[Math.floor(Math.random() * TAXI_DROPS.length)];
-        this.taxi.state = 'drop';
-        this.taxi.drop = { x: drop[0], z: drop[1] };
-        this.fareMark.position.set(this.taxi.drop.x, 7, this.taxi.drop.z);
-        this.fareHalo.position.set(this.taxi.drop.x, 1.5, this.taxi.drop.z);
-        if (events) events.say('Passenger: Take me across town, and step on it.');
-      }
-    } else if (this.taxi.state === 'drop') {
-      if (flatDist(hero.x, hero.z, this.taxi.drop.x, this.taxi.drop.z) < 5) {
-        this.state.addCash(this.taxi.fare);
-        this.state.taxiEarned += this.taxi.fare;
-        if (events) events.toast(`Fare complete — +$${this.taxi.fare}`);
-        this.taxi = { state: 'idle', pickup: null, drop: null, fare: 0, wait: 8 };
-        this.fareMark.visible = false;
-        this.fareHalo.visible = false;
-      }
-    }
-  }
+    },
+  };
+
+  story.placeBeacon();
+  return story;
 }

@@ -1,280 +1,330 @@
-// Street life for Solmar Heat v3: detailed procedural cars and people.
-// Cars get sculpted bodies, glass cabins, chrome, spinning hubcap wheels,
-// headlight cones and brake lights; people get articulated limbs and a real
-// walk cycle. Shared geometries and materials keep the draw calls in check.
+// Street life: AI cars looping the blocks and pedestrians on the sidewalks.
+// The car body builder here is shared by the hero and the police, so every
+// car on the road looks like it belongs to the same city.
 
 import * as THREE from 'three';
-import { makeStream, span, whole, choose, clampNum, flatDist, pushOut } from './util.js';
-import { stdMat, sharedGeo, glowTexture } from './visuals.js';
+import { basicMat, glowTexture, stdMat, unitBox, unitCone, unitCylinder, unitSphere } from './visuals.js';
+import { angleLerp, clamp, dist2d, hash2, mulberry32, pick, range } from './util.js';
 
-const PAINT = [0xc23b2e, 0x2e6fc2, 0xe0a030, 0x3a9a5a, 0x7a4a9a, 0xd0d0d0, 0x222226, 0x3fa8a0];
-const PED_SHIRTS = [0xe05a5a, 0x5a8ae0, 0x5ae08a, 0xe0c05a, 0x9a5ae0, 0xe0e0e0];
-const PED_PANTS = [0x2a3440, 0x3a3a44, 0x5a4632, 0x22303a];
-const PED_SKIN = [0xd8a070, 0xb08a68, 0x8a6248, 0xe8b890];
+const CAR_PAINTS = [0xc23b2e, 0x2e5fc2, 0x3a9a4a, 0xd8c23a, 0x8a8f94, 0x22242a, 0xe8e4da, 0x7a4a9a, 0x2a8a8a];
 
-const glassMat = new THREE.MeshStandardMaterial({ color: 0x14202c, roughness: 0.12, metalness: 0.85 });
-const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.25, metalness: 0.9 });
-const tireMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95 });
-const hubMat = new THREE.MeshStandardMaterial({ color: 0xc8ccd2, roughness: 0.3, metalness: 0.85 });
-const coneMat = new THREE.MeshBasicMaterial({
-  color: 0xffe9a8, transparent: true, opacity: 0.13,
-  blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-});
+const glassMat = stdMat('carglass', () => new THREE.MeshStandardMaterial({ color: 0x18242e, roughness: 0.15, metalness: 0.7 }));
+const chromeMat = stdMat('chrome', () => new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.25, metalness: 0.9 }));
+const tyreMat = stdMat('tyre', () => new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95 }));
+const hubMat = stdMat('hub', () => new THREE.MeshStandardMaterial({ color: 0xb8bec4, roughness: 0.35, metalness: 0.8 }));
 
-/** Build a detailed car. Returns the group plus the parts animators need. */
-export function buildCar(color, x, z, heading) {
-  const g = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.65 });
-  // Two-tone roof: a darker shade of the paint, like a factory option.
-  const roofMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(color).multiplyScalar(0.55), roughness: 0.3, metalness: 0.6,
-  });
-  // Sculpted body: low slab, hood and trunk shoulders, glass cabin.
-  const slab = new THREE.Mesh(sharedGeo('carSlab', () => new THREE.BoxGeometry(2.05, 0.55, 4.5)), paint);
-  slab.position.y = 0.62;
-  slab.castShadow = true;
-  g.add(slab);
-  const hood = new THREE.Mesh(sharedGeo('carHood', () => new THREE.BoxGeometry(1.9, 0.34, 1.15)), paint);
-  hood.position.set(0, 0.95, 1.55);
-  hood.castShadow = true;
-  g.add(hood);
-  const trunk = new THREE.Mesh(sharedGeo('carTrunk', () => new THREE.BoxGeometry(1.9, 0.3, 0.9)), paint);
-  trunk.position.set(0, 0.92, -1.7);
-  g.add(trunk);
-  const cabin = new THREE.Mesh(sharedGeo('carCabin', () => new THREE.BoxGeometry(1.75, 0.62, 2.1)), glassMat);
-  cabin.position.set(0, 1.28, -0.15);
+/** Build one car. Forward is local +Z. Returns the parts the game drives. */
+export function makeCarBody(color, opts = {}) {
+  const group = new THREE.Group();
+  const paint = stdMat(`paint${color.toString(16)}`, () => new THREE.MeshStandardMaterial({ color, roughness: 0.32, metalness: 0.55 }));
+  const body = new THREE.Mesh(unitBox(), paint);
+  body.scale.set(1.9, 0.55, 4.3);
+  body.position.y = 0.62;
+  body.castShadow = true;
+  group.add(body);
+
+  const cabin = new THREE.Mesh(unitBox(), glassMat);
+  cabin.scale.set(1.65, 0.5, 2.1);
+  cabin.position.set(0, 1.12, -0.25);
   cabin.castShadow = true;
-  g.add(cabin);
-  const roof = new THREE.Mesh(sharedGeo('carRoof', () => new THREE.BoxGeometry(1.7, 0.1, 1.9)), roofMat);
-  roof.position.set(0, 1.62, -0.15);
-  g.add(roof);
-  // Chrome grille, bumpers and side trim.
-  const grille = new THREE.Mesh(sharedGeo('carGrille', () => new THREE.BoxGeometry(1.5, 0.22, 0.08)), chromeMat);
-  grille.position.set(0, 0.62, 2.28);
-  g.add(grille);
-  for (const bz of [-2.24, 2.24]) {
-    const bumper = new THREE.Mesh(sharedGeo('carBumper', () => new THREE.BoxGeometry(2.05, 0.18, 0.12)), chromeMat);
-    bumper.position.set(0, 0.42, bz);
-    g.add(bumper);
+  group.add(cabin);
+
+  const grille = new THREE.Mesh(unitBox(), chromeMat);
+  grille.scale.set(1.2, 0.16, 0.1);
+  grille.position.set(0, 0.55, 2.16);
+  group.add(grille);
+
+  for (const s of [-1, 1]) {
+    const bumper = new THREE.Mesh(unitBox(), chromeMat);
+    bumper.scale.set(1.9, 0.14, 0.12);
+    bumper.position.set(0, 0.38, s * 2.16);
+    group.add(bumper);
   }
-  // Wheels with hubcaps; they spin with speed.
+
   const wheels = [];
-  const wheelGeo = sharedGeo('wheel', () => new THREE.CylinderGeometry(0.44, 0.44, 0.36, 14));
-  const hubGeo = sharedGeo('hub', () => new THREE.CylinderGeometry(0.22, 0.22, 0.38, 10));
-  [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]].forEach(([wx, wz]) => {
+  for (const [wx, wz, steer] of [[-0.85, 1.35, true], [0.85, 1.35, true], [-0.85, -1.35, false], [0.85, -1.35, false]]) {
     const pivot = new THREE.Group();
-    const w = new THREE.Mesh(wheelGeo, tireMat);
-    w.rotation.z = Math.PI / 2;
-    w.castShadow = true;
-    const hub = new THREE.Mesh(hubGeo, hubMat);
+    pivot.position.set(wx, 0.36, wz);
+    const wheel = new THREE.Mesh(unitCylinder(12), tyreMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.scale.set(0.36, 0.26, 0.36);
+    wheel.castShadow = true;
+    pivot.add(wheel);
+    const hub = new THREE.Mesh(unitCylinder(8), hubMat);
     hub.rotation.z = Math.PI / 2;
-    pivot.add(w);
+    hub.scale.set(0.18, 0.28, 0.18);
     pivot.add(hub);
-    pivot.position.set(wx, 0.44, wz);
-    g.add(pivot);
-    wheels.push(pivot);
-  });
-  // Headlights: emissive lenses + additive cones (lit at dusk/night).
-  const headMat = new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffe9a8, emissiveIntensity: 0.9, roughness: 0.3 });
-  const headL = new THREE.Mesh(sharedGeo('headLens', () => new THREE.BoxGeometry(0.42, 0.22, 0.08)), headMat);
-  headL.position.set(-0.68, 0.72, 2.26);
-  g.add(headL);
-  const headR = headL.clone();
-  headR.position.x = 0.68;
-  g.add(headR);
-  const cones = [];
-  for (const lx of [-0.68, 0.68]) {
-    const cone = new THREE.Mesh(sharedGeo('beam', () => new THREE.ConeGeometry(1.15, 7, 10, 1, true)), coneMat);
-    cone.rotation.x = -Math.PI / 2 - 0.1;
-    cone.position.set(lx, 0.6, 5.6);
-    cone.visible = false;
-    g.add(cone);
-    cones.push(cone);
+    group.add(pivot);
+    wheels.push({ pivot, wheel, steer });
   }
-  // Taillights: red emissive, flare on braking.
-  const tailMat = new THREE.MeshStandardMaterial({ color: 0x881111, emissive: 0xff1a1a, emissiveIntensity: 0.7, roughness: 0.4 });
-  const tailL = new THREE.Mesh(sharedGeo('tailLens', () => new THREE.BoxGeometry(0.46, 0.2, 0.08)), tailMat);
-  tailL.position.set(-0.68, 0.72, -2.26);
-  g.add(tailL);
-  const tailR = tailL.clone();
-  tailR.position.x = 0.68;
-  g.add(tailR);
-  g.position.set(x, 0, z);
-  g.rotation.y = heading;
-  return { group: g, body: slab, wheels, headMat, tailMat, cones, paint };
+
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xffedb0, emissiveIntensity: 0.4 });
+  const tailMat = new THREE.MeshStandardMaterial({ color: 0x7a0f0f, emissive: 0xff1a1a, emissiveIntensity: 0.5 });
+  const beams = [];
+  for (const s of [-1, 1]) {
+    const lamp = new THREE.Mesh(unitBox(), headMat);
+    lamp.scale.set(0.42, 0.16, 0.08);
+    lamp.position.set(s * 0.62, 0.72, 2.16);
+    group.add(lamp);
+    const beam = new THREE.Mesh(
+      unitCone(10),
+      new THREE.MeshBasicMaterial({ color: 0xffe9b0, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+    );
+    beam.rotation.x = Math.PI / 2;
+    beam.scale.set(1.1, 5.5, 1.1);
+    beam.position.set(s * 0.62, 0.55, 4.6);
+    group.add(beam);
+    beams.push(beam);
+    const tail = new THREE.Mesh(unitBox(), tailMat);
+    tail.scale.set(0.42, 0.14, 0.08);
+    tail.position.set(s * 0.62, 0.72, -2.16);
+    group.add(tail);
+  }
+
+  if (opts.police) {
+    // White doors and hood over the paint, plus the light bar.
+    const white = stdMat('policewhite', () => new THREE.MeshStandardMaterial({ color: 0xf2f2ee, roughness: 0.35, metalness: 0.4 }));
+    const doors = new THREE.Mesh(unitBox(), white);
+    doors.scale.set(1.92, 0.4, 2.2);
+    doors.position.set(0, 0.62, 0.1);
+    group.add(doors);
+    const bar = new THREE.Group();
+    const barBase = new THREE.Mesh(unitBox(), stdMat('barbase', () => new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.5 })));
+    barBase.scale.set(1.1, 0.12, 0.4);
+    bar.add(barBase);
+    const redLens = new THREE.Mesh(unitBox(), new THREE.MeshStandardMaterial({ color: 0x550000, emissive: 0xff2020, emissiveIntensity: 1 }));
+    redLens.scale.set(0.5, 0.16, 0.42);
+    redLens.position.x = -0.28;
+    bar.add(redLens);
+    const blueLens = new THREE.Mesh(unitBox(), new THREE.MeshStandardMaterial({ color: 0x000055, emissive: 0x2040ff, emissiveIntensity: 1 }));
+    blueLens.scale.set(0.5, 0.16, 0.42);
+    blueLens.position.x = 0.28;
+    bar.add(blueLens);
+    bar.position.set(0, 1.44, -0.25);
+    group.add(bar);
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: glowTexture(), color: 0x6080ff, transparent: true, opacity: 0.0, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    halo.scale.set(4, 2.4, 1);
+    halo.position.set(0, 1.7, -0.25);
+    group.add(halo);
+    const pushBar = new THREE.Mesh(unitBox(), chromeMat);
+    pushBar.scale.set(1.7, 0.35, 0.14);
+    pushBar.position.set(0, 0.5, 2.2);
+    group.add(pushBar);
+    return { group, wheels, headMat, tailMat, beams, bar: { redLens, blueLens, halo } };
+  }
+
+  if (opts.taxi) {
+    const sign = new THREE.Mesh(unitBox(), new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffe14a, emissiveIntensity: 0.9 }));
+    sign.scale.set(0.7, 0.22, 0.34);
+    sign.position.set(0, 1.5, -0.25);
+    group.add(sign);
+    const beacon = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: glowTexture(), color: 0x51ff7a, transparent: true, opacity: 0.75, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    beacon.scale.set(2.4, 2.4, 1);
+    beacon.position.set(0, 2.1, -0.25);
+    group.add(beacon);
+    return { group, wheels, headMat, tailMat, beams, taxiBeacon: beacon };
+  }
+
+  return { group, wheels, headMat, tailMat, beams };
 }
 
-/** Articulated low-poly person: torso, head, swinging arms and legs. */
-export function buildPerson(shirt, pants, skin) {
-  const g = new THREE.Group();
-  const rig = new THREE.Group();
-  g.add(rig);
-  const torso = new THREE.Mesh(
-    sharedGeo('torso', () => new THREE.CylinderGeometry(0.4, 0.48, 1.25, 10)),
-    stdMat(shirt, 0.9),
-  );
-  torso.position.y = 1.2;
+const PED_SHIRTS = [0xc23b2e, 0x2e5fc2, 0x3a9a4a, 0xd8c23a, 0xe8e4da, 0x7a4a9a, 0x2a8a8a, 0xe07a3a];
+const PED_SKINS = [0xe8b88a, 0xc98d5f, 0x8a5a3a, 0xf0c8a0];
+
+/** One pedestrian: torso, head, and limbs that swing on pivots. */
+function makePed(rng) {
+  const group = new THREE.Group();
+  const shirt = stdMat(`shirt${pick(rng, PED_SHIRTS).toString(16)}`, () => new THREE.MeshStandardMaterial({ color: pick(rng, PED_SHIRTS), roughness: 0.9 }));
+  const skin = stdMat(`skin${pick(rng, PED_SKINS).toString(16)}`, () => new THREE.MeshStandardMaterial({ color: pick(rng, PED_SKINS), roughness: 0.8 }));
+  const pants = stdMat('pants', () => new THREE.MeshStandardMaterial({ color: 0x2a3242, roughness: 0.95 }));
+
+  const torso = new THREE.Mesh(unitBox(), shirt);
+  torso.scale.set(0.55, 0.72, 0.32);
+  torso.position.y = 1.18;
   torso.castShadow = true;
-  rig.add(torso);
-  const head = new THREE.Mesh(sharedGeo('head', () => new THREE.SphereGeometry(0.38, 12, 10)), stdMat(skin, 0.75));
-  head.position.y = 2.12;
+  group.add(torso);
+  const head = new THREE.Mesh(unitSphere(10, 8), skin);
+  head.scale.setScalar(0.21);
+  head.position.y = 1.72;
   head.castShadow = true;
-  rig.add(head);
-  const hair = new THREE.Mesh(sharedGeo('hair', () => new THREE.SphereGeometry(0.39, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55)), stdMat(0x2a2018, 0.9));
-  hair.position.y = 2.18;
-  rig.add(hair);
+  group.add(head);
+  const cap = new THREE.Mesh(unitCylinder(8), stdMat('cap', () => new THREE.MeshStandardMaterial({ color: 0x30343a, roughness: 0.8 })));
+  cap.scale.set(0.22, 0.1, 0.22);
+  cap.position.y = 1.88;
+  group.add(cap);
+
   const limbs = { armL: null, armR: null, legL: null, legR: null };
-  const armGeo = sharedGeo('arm', () => new THREE.BoxGeometry(0.24, 1.05, 0.24));
-  const legGeo = sharedGeo('leg', () => new THREE.BoxGeometry(0.3, 1.0, 0.3));
-  const armMat = stdMat(shirt, 0.9);
-  const legMat = stdMat(pants, 0.95);
-  const shoeMat = stdMat(0x1a1a1a, 0.9);
-  for (const [key, sx, mat, geo, y] of [
-    ['armL', -0.55, armMat, armGeo, 1.72],
-    ['armR', 0.55, armMat, armGeo, 1.72],
-    ['legL', -0.22, legMat, legGeo, 0.62],
-    ['legR', 0.22, legMat, legGeo, 0.62],
-  ]) {
+  const mkLimb = (mat, w, len, px, py) => {
     const pivot = new THREE.Group();
-    pivot.position.set(sx, y, 0);
-    const limb = new THREE.Mesh(geo, mat);
-    limb.position.y = -0.48;
-    limb.castShadow = true;
-    pivot.add(limb);
-    if (key.startsWith('leg')) {
-      const shoe = new THREE.Mesh(sharedGeo('shoe', () => new THREE.BoxGeometry(0.32, 0.16, 0.55)), shoeMat);
-      shoe.position.set(0, -0.98, 0.08);
-      pivot.add(shoe);
-    }
-    rig.add(pivot);
-    limbs[key] = pivot;
+    pivot.position.set(px, py, 0);
+    const seg = new THREE.Mesh(unitBox(), mat);
+    seg.scale.set(w, len, w);
+    seg.position.y = -len / 2;
+    seg.castShadow = true;
+    pivot.add(seg);
+    group.add(pivot);
+    return pivot;
+  };
+  limbs.armL = mkLimb(skin, 0.16, 0.62, -0.36, 1.5);
+  limbs.armR = mkLimb(skin, 0.16, 0.62, 0.36, 1.5);
+  limbs.legL = mkLimb(pants, 0.2, 0.72, -0.15, 0.82);
+  limbs.legR = mkLimb(pants, 0.2, 0.72, 0.15, 0.82);
+  return { group, limbs };
+}
+
+export function createTraffic(scene, world) {
+  const rng = mulberry32(777);
+  const cars = [];
+  const peds = [];
+
+  // Rectangle loops around blocks: each car circles one block on its streets.
+  function blockLoop(bx, bz) {
+    const cx = bx * 30 + 15;
+    const cz = bz * 30 + 15;
+    const o = 4.6; // lane offset from the street centre line
+    return [
+      { x: cx - 15 - o, z: cz - 15 - o },
+      { x: cx + 15 + o, z: cz - 15 - o },
+      { x: cx + 15 + o, z: cz + 15 + o },
+      { x: cx - 15 - o, z: cz + 15 + o },
+    ];
   }
-  return { group: g, rig, limbs, phase: Math.random() * Math.PI * 2 };
-}
 
-/** Drive a walk cycle: legs and arms swing against each other. */
-export function walkCycle(person, dt, speed) {
-  person.phase += dt * speed * 2.1;
-  const s = Math.sin(person.phase);
-  const amp = speed > 0.1 ? Math.min(0.75, 0.3 + speed * 0.05) : 0;
-  person.limbs.legL.rotation.x = s * amp;
-  person.limbs.legR.rotation.x = -s * amp;
-  person.limbs.armL.rotation.x = -s * amp * 0.8;
-  person.limbs.armR.rotation.x = s * amp * 0.8;
-  person.rig.position.y = Math.abs(Math.cos(person.phase)) * 0.07 * (amp > 0 ? 1 : 0);
-}
-
-export class StreetLife {
-  constructor(scene, colliders, parkedSpots) {
-    this.scene = scene;
-    this.colliders = colliders;
-    this.rng = makeStream(9917);
-    this.cars = [];
-    this.peds = [];
-    this.danger = { x: 0, z: 0, t: -99 };
-    this.night = false;
-
-    parkedSpots.forEach((s, i) => {
-      const built = buildCar(PAINT[i % PAINT.length], s.x, s.z, s.heading);
-      scene.add(built.group);
-      this.cars.push({
-        mesh: built.group, heading: s.heading, speed: 0, kind: 'parked',
-        damage: 0, wrecked: false, route: null, parts: built, braking: false,
-      });
+  const usedBlocks = new Set();
+  for (let i = 0; i < 12; i++) {
+    let bx = Math.floor(range(rng, -5, 5));
+    let bz = Math.floor(range(rng, -5, 5));
+    let guard = 0;
+    while ((usedBlocks.has(`${bx},${bz}`) || bx * 30 + 15 > 140 || bz * 30 + 15 > 140) && guard++ < 20) {
+      bx = Math.floor(range(rng, -5, 5));
+      bz = Math.floor(range(rng, -5, 5));
+    }
+    usedBlocks.add(`${bx},${bz}`);
+    const loop = blockLoop(bx, bz);
+    const taxi = i < 2;
+    const color = taxi ? 0xe8c23a : CAR_PAINTS[i % CAR_PAINTS.length];
+    const parts = makeCarBody(color, taxi ? { taxi: true } : {});
+    const start = loop[Math.floor(rng() * loop.length)];
+    parts.group.position.set(start.x, 0, start.z);
+    scene.add(parts.group);
+    cars.push({
+      mesh: parts.group,
+      parts,
+      loop,
+      wp: 1,
+      heading: 0,
+      speed: 0,
+      cruise: 6 + rng() * 4,
+      taxi,
+      kind: taxi ? 'taxi' : 'traffic',
     });
-
-    for (let i = 0; i < 10; i++) {
-      const alongX = i % 2 === 0;
-      const lane = (Math.floor(i / 2) - 2) * 42;
-      const x = alongX ? span(this.rng, -120, 110) : lane;
-      const z = alongX ? lane : span(this.rng, -120, 120);
-      const heading = alongX ? (this.rng() < 0.5 ? 0 : Math.PI) : (this.rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
-      const built = buildCar(choose(this.rng, PAINT), x, z, heading);
-      scene.add(built.group);
-      this.cars.push({
-        mesh: built.group, heading, speed: span(this.rng, 7, 12), kind: 'traffic',
-        damage: 0, wrecked: false, route: { alongX, lane, dir: heading }, parts: built, braking: false,
-      });
-    }
-
-    for (let i = 0; i < 16; i++) {
-      const person = buildPerson(
-        choose(this.rng, PED_SHIRTS), choose(this.rng, PED_PANTS), choose(this.rng, PED_SKIN),
-      );
-      const x = span(this.rng, -120, 110), z = span(this.rng, -120, 120);
-      person.group.position.set(x, 0, z);
-      // Height variety so the crowd stops looking cloned.
-      person.group.scale.setScalar(span(this.rng, 0.92, 1.08));
-      scene.add(person.group);
-      this.peds.push({
-        mesh: person.group, person, heading: this.rng() * Math.PI * 2,
-        speed: span(this.rng, 1.2, 2.2), flee: 0, down: false,
-      });
-    }
   }
 
-  scare(x, z) { this.danger = { x, z, t: performance.now() / 1000 }; }
+  for (let i = 0; i < 12; i++) {
+    const ped = makePed(rng);
+    const x = range(rng, -165, 165);
+    const z = range(rng, -165, 165);
+    ped.group.position.set(x, 0, z);
+    scene.add(ped.group);
+    peds.push({
+      mesh: ped.group,
+      limbs: ped.limbs,
+      x,
+      z,
+      heading: rng() * Math.PI * 2,
+      speed: 1.2 + rng() * 0.8,
+      phase: rng() * Math.PI * 2,
+      tx: x,
+      tz: z,
+      down: 0,
+      scale: 0.92 + rng() * 0.16,
+    });
+    ped.group.scale.setScalar(peds[i].scale);
+  }
 
-  nearestCar(x, z, maxD) {
-    let best = null, bestD = maxD;
-    for (const c of this.cars) {
-      if (c.kind === 'traffic') continue;
-      const d = flatDist(x, z, c.mesh.position.x, c.mesh.position.z);
-      if (d < bestD) { best = c; bestD = d; }
+  function nearestCar(x, z, maxDist) {
+    let best = null;
+    let bestD = maxDist;
+    for (const c of cars) {
+      const d = dist2d(x, z, c.mesh.position.x, c.mesh.position.z);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
     }
     return best;
   }
 
-  update(dt, now, playerX, playerZ, playerSpeed) {
-    for (const c of this.cars) {
-      // Headlight cones only read after golden hour.
-      for (const cone of c.parts.cones) cone.visible = this.night;
-      c.parts.tailMat.emissiveIntensity = c.braking ? 2.6 : (this.night ? 1.1 : 0.7);
-      if (c.kind === 'traffic') {
-        const p = c.mesh.position;
-        const nearPlayer = flatDist(p.x, p.z, playerX, playerZ) < 14;
-        const target = nearPlayer ? 3 : 10;
-        c.speed += clampNum(target - c.speed, -8 * dt, 6 * dt);
-        p.x += Math.sin(c.heading) * c.speed * dt;
-        p.z += Math.cos(c.heading) * c.speed * dt;
-        if (p.x > 128 || p.x < -140 || p.z > 140 || p.z < -140) {
-          c.heading += Math.PI / 2;
-          p.x = clampNum(p.x, -138, 126); p.z = clampNum(p.z, -138, 138);
-        }
+  return {
+    cars,
+    peds,
+    nearestCar,
+    update(dt, timeSec, night) {
+      for (const c of cars) {
+        const target = c.loop[c.wp];
+        const dx = target.x - c.mesh.position.x;
+        const dz = target.z - c.mesh.position.z;
+        const d = Math.hypot(dx, dz);
+        const wantHeading = Math.atan2(dx, dz);
+        const turn = angleLerp(c.heading, wantHeading, 1 - Math.exp(-2.2 * dt));
+        const headingErr = Math.abs(((wantHeading - c.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        const targetSpeed = clamp(c.cruise * (1 - headingErr * 0.55), 2.5, c.cruise);
+        c.speed += (targetSpeed - c.speed) * Math.min(1, dt * 1.5);
+        c.heading = turn;
+        c.mesh.position.x += Math.sin(c.heading) * c.speed * dt;
+        c.mesh.position.z += Math.cos(c.heading) * c.speed * dt;
         c.mesh.rotation.y = c.heading;
-        for (const b of this.colliders) {
-          const out = pushOut(p.x, p.z, 2.2, b);
-          if (out) { p.x = out.x; p.z = out.z; c.heading += Math.PI / 2; }
+        const spin = (c.speed * dt) / 0.36;
+        for (const w of c.parts.wheels) {
+          w.wheel.rotation.x += spin;
+          if (w.steer) w.pivot.rotation.y = clamp(angleLerp(0, wantHeading - c.heading, 1), -0.4, 0.4) * 0.5;
+        }
+        c.parts.headMat.emissiveIntensity = night ? 1.6 : 0.4;
+        for (const b of c.parts.beams) b.material.opacity = night ? 0.22 : 0;
+        if (d < 2.5) c.wp = (c.wp + 1) % c.loop.length;
+      }
+      for (const p of peds) {
+        if (p.down > 0) {
+          p.down -= dt;
+          if (p.down <= 0) {
+            p.mesh.rotation.z = 0;
+            p.mesh.position.set(range(rng, -160, 160), 0, range(rng, -160, 160));
+            p.tx = p.mesh.position.x;
+            p.tz = p.mesh.position.z;
+          }
+          continue;
+        }
+        const dx = p.tx - p.x;
+        const dz = p.tz - p.z;
+        const d = Math.hypot(dx, dz);
+        if (d < 1.2) {
+          p.tx = clamp(p.x + range(rng, -50, 50), -168, 168);
+          p.tz = clamp(p.z + range(rng, -50, 50), -168, 168);
+        } else {
+          const want = Math.atan2(dx, dz);
+          p.heading = angleLerp(p.heading, want, 1 - Math.exp(-4 * dt));
+          p.x += Math.sin(p.heading) * p.speed * dt;
+          p.z += Math.cos(p.heading) * p.speed * dt;
+          p.phase += dt * p.speed * 4.4;
+          const swing = Math.sin(p.phase) * 0.55;
+          p.limbs.armL.rotation.x = swing;
+          p.limbs.armR.rotation.x = -swing;
+          p.limbs.legL.rotation.x = -swing * 0.9;
+          p.limbs.legR.rotation.x = swing * 0.9;
+          p.mesh.position.set(p.x, 0, p.z);
+          p.mesh.rotation.y = p.heading;
         }
       }
-      // Wheels roll with speed.
-      const spin = (c.kind === 'traffic' ? c.speed : 0) * dt / 0.44;
-      for (const w of c.parts.wheels) w.rotation.x += spin;
-    }
-
-    const scareFresh = now - this.danger.t < 4;
-    for (const ped of this.peds) {
-      if (ped.down) continue;
-      const p = ped.mesh.position;
-      const dDanger = flatDist(p.x, p.z, this.danger.x, this.danger.z);
-      if (scareFresh && dDanger < 26) ped.flee = 2.5;
-      if (ped.flee > 0) {
-        ped.flee -= dt;
-        ped.heading = Math.atan2(p.x - this.danger.x, p.z - this.danger.z);
-        ped.speed = 5.2;
-      } else if (this.rng() < dt * 0.12) {
-        ped.heading = this.rng() * Math.PI * 2;
-        ped.speed = span(this.rng, 1.2, 2.2);
-      }
-      p.x += Math.sin(ped.heading) * ped.speed * dt;
-      p.z += Math.cos(ped.heading) * ped.speed * dt;
-      if (p.x > 130 || p.x < -140 || p.z > 140 || p.z < -140) ped.heading += Math.PI;
-      for (const b of this.colliders) {
-        const out = pushOut(p.x, p.z, 0.7, b);
-        if (out) { p.x = out.x; p.z = out.z; }
-      }
-      ped.mesh.rotation.y = ped.heading;
-      walkCycle(ped.person, dt, ped.speed);
-    }
-  }
+    },
+    knockPed(p, byCar) {
+      if (p.down > 0) return false;
+      p.down = 6;
+      p.mesh.rotation.z = Math.PI / 2;
+      return true;
+    },
+  };
 }

@@ -1,201 +1,144 @@
-// Solmar PD v3: black-and-white cruisers with flashing light bars, glow
-// halos at night, and striped roadblocks at 3+ stars. Cruisers chase and
-// ram; get caught on foot and it is a bust — fine, and a wake-up at the
-// station.
+// Solmar PD: cruisers that chase the wanted player, flash their light bars
+// and, at three stars and up, throw up striped roadblocks ahead of the escape.
 
 import * as THREE from 'three';
-import { clampNum, flatDist, turnToward } from './util.js';
-import { buildCar } from './traffic.js';
-import { heatToStars } from './state.js';
-import { glowTexture, stdMat, sharedGeo } from './visuals.js';
+import { makeCarBody } from './traffic.js';
+import { basicMat, stdMat, unitBox, unitCylinder } from './visuals.js';
+import { angleLerp, clamp, dist2d } from './util.js';
 
-/** Diagonal black-and-yellow hazard stripes for the roadblock barrier. */
-function stripeTexture() {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 32;
-  const g = c.getContext('2d');
-  g.fillStyle = '#ffc23b';
-  g.fillRect(0, 0, 256, 32);
-  g.fillStyle = '#141414';
-  for (let x = -32; x < 288; x += 64) {
-    g.beginPath();
-    g.moveTo(x, 32);
-    g.lineTo(x + 32, 0);
-    g.lineTo(x + 64, 0);
-    g.lineTo(x + 32, 32);
-    g.closePath();
-    g.fill();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = THREE.RepeatWrapping;
-  return t;
-}
+export function createCops(scene, world, hero, state, display) {
+  const cruisers = [];
+  const roadblocks = [];
+  let spawnTimer = 0;
 
-function cruiserMesh(x, z, heading) {
-  const built = buildCar(0x14181f, x, z, heading);
-  const g = built.group;
-  // Push-bar on the nose: the classic cruiser ram bar.
-  const pushBar = new THREE.Mesh(sharedGeo('pdPush', () => new THREE.BoxGeometry(1.6, 0.32, 0.14)), stdMat(0x111111, 0.5, 0.5));
-  pushBar.position.set(0, 0.55, 2.32);
-  g.add(pushBar);
-  // White doors and hood: the classic black-and-white.
-  const doorMat = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.4, metalness: 0.4 });
-  for (const sx of [-1.03, 1.03]) {
-    const door = new THREE.Mesh(sharedGeo('pdDoor', () => new THREE.BoxGeometry(0.06, 0.62, 1.9)), doorMat);
-    door.position.set(sx, 0.78, -0.1);
-    g.add(door);
-  }
-  const hoodW = new THREE.Mesh(sharedGeo('pdHood', () => new THREE.BoxGeometry(1.7, 0.06, 0.9)), doorMat);
-  hoodW.position.set(0, 1.14, 1.55);
-  g.add(hoodW);
-  // Light bar: red and blue lenses plus a halo sprite that flashes.
-  const barBase = new THREE.Mesh(sharedGeo('barBase', () => new THREE.BoxGeometry(1.5, 0.14, 0.5)), stdMat(0x111111, 0.5, 0.5));
-  barBase.position.set(0, 1.68, -0.15);
-  g.add(barBase);
-  const barMat = new THREE.MeshStandardMaterial({ color: 0x881111, emissive: 0xff1a1a, emissiveIntensity: 1.4, roughness: 0.4 });
-  const bar = new THREE.Mesh(sharedGeo('barLens', () => new THREE.BoxGeometry(0.62, 0.24, 0.42)), barMat);
-  bar.position.set(-0.38, 1.82, -0.15);
-  g.add(bar);
-  const bar2Mat = new THREE.MeshStandardMaterial({ color: 0x112288, emissive: 0x2a6aff, emissiveIntensity: 1.4, roughness: 0.4 });
-  const bar2 = new THREE.Mesh(sharedGeo('barLens', () => new THREE.BoxGeometry(0.62, 0.24, 0.42)), bar2Mat);
-  bar2.position.set(0.38, 1.82, -0.15);
-  g.add(bar2);
-  const haloTex = glowTexture('rgba(255,60,60,0.9)', 'rgba(255,60,60,0)');
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true, opacity: 0.7, depthWrite: false }));
-  halo.scale.set(4.5, 4.5, 1);
-  halo.position.set(0, 2.1, -0.15);
-  g.add(halo);
-  // Rear glow: in a chase the camera sits behind the cruiser, so a second
-  // halo at the tail keeps the light bar visible from the player's view.
-  const haloRear = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true, opacity: 0.55, depthWrite: false }));
-  haloRear.scale.set(3.6, 3.6, 1);
-  haloRear.position.set(0, 1.9, -2.5);
-  g.add(haloRear);
-  return { group: g, bar, bar2, halo, haloRear, parts: built };
-}
+  const barrierMat = stdMat('barrier', () => new THREE.MeshStandardMaterial({ color: 0xd8d8d0, roughness: 0.7 }));
+  const stripeMat = stdMat('barstripe', () => new THREE.MeshStandardMaterial({ color: 0xc22a1e, roughness: 0.7 }));
 
-export class Cops {
-  constructor(scene, state, bay) {
-    this.scene = scene;
-    this.state = state;
-    this.bay = bay;
-    this.cars = [];
-    this.blocks = [];
-    this.bustT = 0;
-    this.flashT = 0;
+  function makeCruiser() {
+    const parts = makeCarBody(0x1a1a22, { police: true });
+    parts.group.position.set(hero.x + 40, 0, hero.z + 40);
+    scene.add(parts.group);
+    return {
+      mesh: parts.group,
+      parts,
+      heading: 0,
+      speed: 0,
+      stuck: 0,
+      lastX: parts.group.position.x,
+      lastZ: parts.group.position.z,
+    };
   }
 
-  wanted() { return heatToStars(this.state.heat); }
-
-  clear() {
-    for (const c of this.cars) this.scene.remove(c.mesh);
-    for (const b of this.blocks) this.scene.remove(b.mesh);
-    this.cars = [];
-    this.blocks = [];
-    this.bustT = 0;
-  }
-
-  _spawnCruiser(x, z) {
-    const built = cruiserMesh(x, z, 0);
-    this.scene.add(built.group);
-    const c = { mesh: built.group, heading: 0, speed: 0, bar: built.bar, bar2: built.bar2, halo: built.halo, haloRear: built.haloRear, parts: built.parts };
-    this.cars.push(c);
-    return c;
-  }
-
-  /** Roadblocks: two cruisers nose-to-nose plus a striped barrier. */
-  _placeBlocks(px, pz, heading) {
-    if (this.blocks.length > 0) return;
-    const fx = Math.sin(heading), fz = Math.cos(heading);
-    const ax = 16 * fx, az = 16 * fz;
-    [[-4, 0], [4, 0]].forEach(([off]) => {
-      const built = cruiserMesh(px + ax - fz * off, pz + az + fx * off, heading + Math.PI / 2);
-      this.scene.add(built.group);
-      this.blocks.push({ mesh: built.group, bar: built.bar, bar2: built.bar2, halo: built.halo, haloRear: built.haloRear });
-    });
-    const stripe = new THREE.Mesh(
-      sharedGeo('barrier', () => new THREE.BoxGeometry(9, 1, 0.4)),
-      new THREE.MeshStandardMaterial({ map: stripeTexture(), roughness: 0.7 }),
-    );
-    stripe.position.set(px + ax, 1, pz + az);
-    stripe.rotation.y = heading + Math.PI / 2;
-    this.scene.add(stripe);
-    this.blocks.push({ mesh: stripe, bar: null, bar2: null, halo: null });
-  }
-
-  _clearBlocks() {
-    for (const b of this.blocks) this.scene.remove(b.mesh);
-    this.blocks = [];
-  }
-
-  update(dt, hero, now, hooks) {
-    const stars = this.wanted();
-    const want = stars;
-    while (this.cars.length < want) {
-      const a = (this.cars.length / Math.max(1, want)) * Math.PI * 2;
-      this._spawnCruiser(hero.x + Math.sin(a) * 55, hero.z + Math.cos(a) * 55);
+  function makeRoadblock(x, z, heading) {
+    const g = new THREE.Group();
+    for (let i = -1; i <= 1; i++) {
+      const bar = new THREE.Mesh(unitBox(), i % 2 ? stripeMat : barrierMat);
+      bar.scale.set(2.4, 0.5, 0.3);
+      bar.position.set(i * 2.5, 0.9, 0);
+      bar.castShadow = true;
+      g.add(bar);
     }
-    while (this.cars.length > want) {
-      const c = this.cars.pop();
-      this.scene.remove(c.mesh);
+    for (const s of [-3.6, 3.6]) {
+      const leg = new THREE.Mesh(unitBox(), barrierMat);
+      leg.scale.set(0.3, 0.9, 0.3);
+      leg.position.set(s, 0.45, 0);
+      g.add(leg);
     }
-    if (stars >= 3) this._placeBlocks(hero.x, hero.z, hero.heading);
-    else this._clearBlocks();
+    g.position.set(x, 0, z);
+    g.rotation.y = heading;
+    scene.add(g);
+    return { group: g, x, z };
+  }
 
-    // Flash the light bars: red and blue alternate, halos pulse with them.
-    this.flashT += dt;
-    const red = Math.floor(this.flashT * 6) % 2 === 0;
-    for (const c of [...this.cars, ...this.blocks]) {
-      if (!c.bar) continue;
-      c.bar.material.emissiveIntensity = red ? 2.6 : 0.25;
-      c.bar2.material.emissiveIntensity = red ? 0.25 : 2.6;
-      if (c.halo) {
-        c.halo.material.opacity = red ? 0.75 : 0.4;
-        c.halo.material.color.setHex(red ? 0xff2a2a : 0x2a6aff);
+  function desiredCount() {
+    if (state.wanted <= 0) return 0;
+    if (state.wanted < 3) return 1 + Math.floor(state.wanted / 2);
+    return 3;
+  }
+
+  return {
+    cruisers,
+    roadblocks,
+    update(dt, timeSec) {
+      // Spawn and despawn cruisers to match the wanted level.
+      const want = desiredCount();
+      spawnTimer -= dt;
+      if (cruisers.length < want && spawnTimer <= 0) {
+        spawnTimer = 1.2;
+        const c = makeCruiser();
+        const a = Math.random() * Math.PI * 2;
+        c.mesh.position.set(hero.x + Math.sin(a) * 42, 0, hero.z + Math.cos(a) * 42);
+        cruisers.push(c);
       }
-      if (c.haloRear) {
-        c.haloRear.material.opacity = red ? 0.6 : 0.3;
-        c.haloRear.material.color.setHex(red ? 0xff2a2a : 0x2a6aff);
+      if (cruisers.length > want) {
+        const c = cruisers.pop();
+        scene.remove(c.mesh);
       }
-    }
+      // Roadblocks only at three stars and up.
+      if (state.wanted >= 3 && roadblocks.length < 2) {
+        const a = hero.heading;
+        const bx = Math.round((hero.x + Math.sin(a) * 34) / 30) * 30;
+        const bz = Math.round((hero.z + Math.cos(a) * 34) / 30) * 30;
+        if (dist2d(bx, bz, hero.x, hero.z) > 18) roadblocks.push(makeRoadblock(bx, bz, a));
+      }
+      if (state.wanted < 3) {
+        for (const rb of roadblocks) scene.remove(rb.group);
+        roadblocks.length = 0;
+      }
 
-    const chaseSpeed = 15 + stars * 3.2;
-    for (const c of this.cars) {
-      const p = c.mesh.position;
-      const target = Math.atan2(hero.x - p.x, hero.z - p.z);
-      c.heading = turnToward(c.heading, target, 2.4 * dt);
-      c.speed = Math.min(c.speed + 14 * dt, chaseSpeed);
-      p.x += Math.sin(c.heading) * c.speed * dt;
-      p.z += Math.cos(c.heading) * c.speed * dt;
-      p.x = clampNum(p.x, -148, 132);
-      p.z = clampNum(p.z, -148, 148);
-      c.mesh.rotation.y = c.heading;
-      const spin = c.speed * dt / 0.44;
-      for (const w of c.parts.wheels) w.rotation.x += spin;
-      const d = flatDist(p.x, p.z, hero.x, hero.z);
-      if (d < 3.4) {
-        if (hero.driving) {
-          hero.dentCar(9);
-          hero.speed *= 0.55;
-          if (hooks.onRam) hooks.onRam();
-        } else if (hooks.onTouch) {
-          hooks.onTouch(dt);
+      const flash = Math.floor(timeSec * 5) % 2 === 0;
+      for (const c of cruisers) {
+        // Steer toward the hero, with a capped turn rate.
+        const dx = hero.x - c.mesh.position.x;
+        const dz = hero.z - c.mesh.position.z;
+        const d = Math.hypot(dx, dz);
+        const wantHeading = Math.atan2(dx, dz);
+        c.heading = angleLerp(c.heading, wantHeading, 1 - Math.exp(-1.6 * dt));
+        const targetSpeed = clamp(9 + state.wanted * 3.2, 12, 24);
+        c.speed += (targetSpeed - c.speed) * Math.min(1, dt * 1.2);
+        c.mesh.position.x += Math.sin(c.heading) * c.speed * dt;
+        c.mesh.position.z += Math.cos(c.heading) * c.speed * dt;
+        c.mesh.rotation.y = c.heading;
+        const spin = (c.speed * dt) / 0.36;
+        for (const w of c.parts.wheels) w.wheel.rotation.x += spin;
+        // Flashing light bar.
+        c.parts.bar.redLens.material.emissiveIntensity = flash ? 3.2 : 0.15;
+        c.parts.bar.blueLens.material.emissiveIntensity = flash ? 0.15 : 3.2;
+        c.parts.bar.halo.material.color.setHex(flash ? 0xff3040 : 0x3050ff);
+        c.parts.bar.halo.material.opacity = 0.55;
+        // Ram the player on contact.
+        if (d < 3.4) {
+          if (hero.driving) {
+            hero.damage(4, 'ram');
+            hero.speed *= 0.55;
+            c.speed *= 0.5;
+          } else {
+            hero.damage(6, 'ram');
+          }
+          c.mesh.position.x -= Math.sin(c.heading) * 1.2;
+          c.mesh.position.z -= Math.cos(c.heading) * 1.2;
+        }
+        // Stuck cruisers teleport back into the chase.
+        const moved = dist2d(c.mesh.position.x, c.mesh.position.z, c.lastX, c.lastZ);
+        if (moved < 0.2) c.stuck += dt;
+        else c.stuck = 0;
+        c.lastX = c.mesh.position.x;
+        c.lastZ = c.mesh.position.z;
+        if (c.stuck > 4) {
+          const a = Math.random() * Math.PI * 2;
+          c.mesh.position.set(hero.x + Math.sin(a) * 38, 0, hero.z + Math.cos(a) * 38);
+          c.stuck = 0;
         }
       }
-    }
 
-    if (stars > 0 && !hero.driving) {
-      let close = false;
-      for (const c of this.cars) {
-        if (flatDist(c.mesh.position.x, c.mesh.position.z, hero.x, hero.z) < 3.2) { close = true; break; }
+      // Roadblocks stop the car cold.
+      for (const rb of roadblocks) {
+        if (hero.driving && dist2d(hero.x, hero.z, rb.x, rb.z) < 3) {
+          hero.damage(10, 'roadblock');
+          hero.speed *= -0.3;
+          display.toast('Roadblock! Find another way around');
+        }
       }
-      this.bustT = close ? this.bustT + dt : 0;
-      if (this.bustT > 1.4 && hooks.onBusted) {
-        this.bustT = 0;
-        hooks.onBusted();
-      }
-    } else {
-      this.bustT = 0;
-    }
-  }
+    },
+  };
 }

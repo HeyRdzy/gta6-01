@@ -1,242 +1,68 @@
-// Visual core for Solmar Heat v3: the renderer, the sky, and every shared
-// look — canvas textures, neon signs, glow sprites, and the geometry and
-// material caches that keep the draw-call count low. Nothing here knows
-// about missions or input; it only makes the bay look expensive.
+// Rendering setup, sky, lights and every texture the city is made of.
+// All textures are drawn on canvas at boot, so the game loads no images.
 
 import * as THREE from 'three';
+import { clamp01, lerp, makeCanvas, mulberry32 } from './util.js';
 
-/** The look's anchor: golden hour, low sun, long shadows. */
-export const GOLDEN_T = 0.06;
-
-/** Build the renderer: ACES filmic tone mapping, soft shadows, sRGB. */
-export function makeRenderer(canvas, pixelCap = 1.75) {
+/** Build the WebGL renderer with the look the game is graded on. */
+export function createRenderer(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelCap));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.06;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.06;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   return renderer;
 }
 
-/** A soft radial blob, reused for clouds, lamp glow and muzzle sprites. */
-export function glowTexture(inner = 'rgba(255,255,255,1)', outer = 'rgba(255,255,255,0)') {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const g = c.getContext('2d');
-  const grad = g.createRadialGradient(64, 64, 4, 64, 64, 62);
-  grad.addColorStop(0, inner);
-  grad.addColorStop(1, outer);
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 128, 128);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
+/** One sky colour stop of the day cycle. */
+const SKY_STOPS = [
+  { t: 0.0, top: 0x2c4a6b, horizon: 0xf2a56b, sun: 0xffb36b, fog: 0xd9a06f, sunI: 0.7, hemi: 0.5, glow: 0.5 },
+  { t: 0.12, top: 0x3f6ea6, horizon: 0xbcd6ea, sun: 0xfff2c8, fog: 0xa8c4d8, sunI: 1.2, hemi: 0.8, glow: 0.15 },
+  { t: 0.3, top: 0x2f7fd0, horizon: 0xa8d4ef, sun: 0xffffff, fog: 0xbcd8ea, sunI: 1.5, hemi: 1.0, glow: 0.05 },
+  { t: 0.55, top: 0x3a7cc0, horizon: 0xe8c98f, sun: 0xffe9a8, fog: 0xc9c09a, sunI: 1.3, hemi: 0.9, glow: 0.1 },
+  { t: 0.7, top: 0x35548f, horizon: 0xf7a45c, sun: 0xff9a3d, fog: 0xe8a06a, sunI: 1.1, hemi: 0.7, glow: 0.35 },
+  { t: 0.8, top: 0x2a3560, horizon: 0xe86a4e, sun: 0xff6a2d, fog: 0xc97a5e, sunI: 0.8, hemi: 0.55, glow: 0.7 },
+  { t: 0.88, top: 0x171c38, horizon: 0x7a4a72, sun: 0xff8a5c, fog: 0x5e4a66, sunI: 0.45, hemi: 0.4, glow: 1.0 },
+  { t: 0.96, top: 0x0a0f24, horizon: 0x1c2440, sun: 0x8899bb, fog: 0x141a2e, sunI: 0.25, hemi: 0.3, glow: 1.0 },
+  { t: 1.0, top: 0x2c4a6b, horizon: 0xf2a56b, sun: 0xffb36b, fog: 0xd9a06f, sunI: 0.7, hemi: 0.5, glow: 0.5 },
+];
 
-/** Neon sign face: glowing original text on a dark panel. */
-export function neonTexture(text, color = '#ff5a7a', sub = '') {
-  const c = document.createElement('canvas');
-  c.width = 512; c.height = 160;
-  const g = c.getContext('2d');
-  g.fillStyle = '#0d0a14';
-  g.fillRect(0, 0, 512, 160);
-  // Double border: a bright outer tube and a dim inner one, like real neon.
-  g.strokeStyle = color;
-  g.lineWidth = 7;
-  g.shadowColor = color;
-  g.shadowBlur = 18;
-  g.strokeRect(9, 9, 494, 142);
-  g.globalAlpha = 0.55;
-  g.lineWidth = 2;
-  g.strokeRect(20, 20, 472, 120);
-  g.globalAlpha = 1;
-  g.font = '900 64px Trebuchet MS, Verdana, sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.shadowBlur = 26;
-  g.fillStyle = '#ffffff';
-  g.fillText(text, 256, sub ? 66 : 82);
-  if (sub) {
-    g.font = '700 34px Trebuchet MS, Verdana, sans-serif';
-    g.shadowBlur = 14;
-    g.fillStyle = color;
-    g.fillText(sub, 256, 122);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
-}
+const _c1 = new THREE.Color();
+const _c2 = new THREE.Color();
 
-/** Tower facade: window grid, some lit warm, some lit cool, floor bands.
- *  Lit windows are bright and warm so towers read at dusk instead of
- *  going black; dark windows stay a deep blue-grey, never pure black. */
-export function facadeTexture(rng, base = '#3a3f4d', lit = 0.55) {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 256;
-  const g = c.getContext('2d');
-  g.fillStyle = base;
-  g.fillRect(0, 0, 128, 256);
-  // Subtle vertical shading so the slab has a face, not a flat colour.
-  const shade = g.createLinearGradient(0, 0, 128, 0);
-  shade.addColorStop(0, 'rgba(255,255,255,0.10)');
-  shade.addColorStop(0.5, 'rgba(255,255,255,0)');
-  shade.addColorStop(1, 'rgba(0,0,0,0.22)');
-  g.fillStyle = shade;
-  g.fillRect(0, 0, 128, 256);
-  g.fillStyle = 'rgba(0,0,0,0.30)';
-  for (let y = 0; y < 256; y += 16) g.fillRect(0, y, 128, 2);
-  for (let y = 10; y < 248; y += 16) {
-    for (let x = 8; x < 120; x += 14) {
-      const r = rng();
-      if (r < lit) {
-        const warm = rng() < 0.62;
-        g.fillStyle = warm ? '#ffe3a1' : '#bfe0ff';
-        g.fillRect(x, y, 9, 10);
-        // Hot core inside each lit window so it glows against the glass.
-        g.fillStyle = warm ? 'rgba(255,240,200,0.9)' : 'rgba(220,240,255,0.9)';
-        g.fillRect(x + 2, y + 2, 5, 6);
-      } else {
-        g.fillStyle = '#1b2434';
-        g.fillRect(x, y, 9, 10);
-      }
+function stopAt(dayT) {
+  const t = ((dayT % 1) + 1) % 1;
+  for (let i = 0; i < SKY_STOPS.length - 1; i++) {
+    const a = SKY_STOPS[i];
+    const b = SKY_STOPS[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const k = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t);
+      return { a, b, k };
     }
   }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  return t;
+  return { a: SKY_STOPS[0], b: SKY_STOPS[0], k: 0 };
 }
 
-/** Asphalt with centre dashes, edge lines and patch wear. */
-export function roadTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#38343a';
-  g.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 260; i++) {
-    g.fillStyle = `rgba(255,255,255,${0.02 + Math.random() * 0.04})`;
-    g.fillRect(Math.random() * 128, Math.random() * 128, 2, 2);
-  }
-  g.fillStyle = '#c8b25a';
-  g.fillRect(61, 0, 3, 128);
-  g.fillStyle = 'rgba(230,230,230,0.75)';
-  g.fillRect(6, 0, 3, 128);
-  g.fillRect(119, 0, 3, 128);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.RepeatWrapping;
-  return t;
+function mixColor(a, b, k, out) {
+  _c1.setHex(a);
+  _c2.setHex(b);
+  out.copy(_c1).lerp(_c2, k);
+  return out;
 }
 
-/** Pale paver sidewalk. */
-export function sidewalkTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#8d8578';
-  g.fillRect(0, 0, 128, 128);
-  g.strokeStyle = 'rgba(0,0,0,0.28)';
-  g.lineWidth = 2;
-  for (let i = 0; i <= 128; i += 32) {
-    g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 128); g.stroke();
-    g.beginPath(); g.moveTo(0, i); g.lineTo(128, i); g.stroke();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-/** Sand with speckles and a wet darker band. */
-export function sandTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const g = c.getContext('2d');
-  g.fillStyle = '#ddbd85';
-  g.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 500; i++) {
-    g.fillStyle = `rgba(120,90,40,${0.08 + Math.random() * 0.14})`;
-    g.fillRect(Math.random() * 128, Math.random() * 128, 2, 1);
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-/** Palm frond: tapered green blades fanning from a hub, on transparency.
- *  Two greens and a pale midrib per blade so the crown reads as leaves,
- *  not a black starburst, against the sunset. */
-export function frondTexture() {
-  const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
-  const g = c.getContext('2d');
-  g.clearRect(0, 0, 128, 128);
-  g.lineCap = 'round';
-  for (let i = 0; i < 11; i++) {
-    const a = (i / 11) * Math.PI * 2 + 0.28;
-    const tx = 64 + Math.cos(a) * 56, ty = 64 + Math.sin(a) * 56 + 10;
-    const mx = 64 + Math.cos(a) * 30, my = 64 + Math.sin(a) * 30 + 5;
-    // Blade: a wide green stroke, then a paler midrib on top. Bright
-    // greens on purpose — the crown is lit by the sunset, not in shadow.
-    g.strokeStyle = i % 2 === 0 ? '#55b368' : '#3f9a52';
-    g.lineWidth = 9;
-    g.beginPath();
-    g.moveTo(64, 64);
-    g.quadraticCurveTo(mx, my, tx, ty);
-    g.stroke();
-    g.strokeStyle = '#9ad69a';
-    g.lineWidth = 2;
-    g.beginPath();
-    g.moveTo(64, 64);
-    g.quadraticCurveTo(mx, my, tx, ty);
-    g.stroke();
-  }
-  g.fillStyle = '#5a4028';
-  g.beginPath(); g.arc(64, 64, 6, 0, Math.PI * 2); g.fill();
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-/** Shared geometry cache: one box/cylinder/sphere reused everywhere. */
-const geoCache = new Map();
-export function sharedGeo(key, make) {
-  if (!geoCache.has(key)) geoCache.set(key, make());
-  return geoCache.get(key);
-}
-
-/** Standard material cache keyed by colour + roughness + metalness. */
-const matCache = new Map();
-export function stdMat(color, roughness = 0.85, metalness = 0.0) {
-  const key = `${color}|${roughness}|${metalness}`;
-  if (!matCache.has(key)) {
-    matCache.set(key, new THREE.MeshStandardMaterial({ color, roughness, metalness }));
-  }
-  return matCache.get(key);
-}
-
-/** Glowing sky dome: gradient + sun disc, driven by dayT colours.
- *  The blue holds most of the dome now — the warm band sits low on the
- *  horizon — so the sky reads as a sunset, not a flat red wall, and the
- *  sun disc stays crisp instead of washing the whole frame out. */
-export function makeSky(scene) {
+/** Gradient sky dome with a sun glow, plus drifting cloud sprites. */
+export function createSky(scene) {
   const uniforms = {
-    topColor: { value: new THREE.Color(0x3a5a9e) },
-    midColor: { value: new THREE.Color(0xffb36b) },
-    botColor: { value: new THREE.Color(0x54283a) },
-    sunDir: { value: new THREE.Vector3(-0.6, 0.25, 0.3).normalize() },
-    sunColor: { value: new THREE.Color(0xffd9a0) },
+    topColor: { value: new THREE.Color(0x35548f) },
+    horizonColor: { value: new THREE.Color(0xf7a45c) },
+    sunDir: { value: new THREE.Vector3(0, 1, 0) },
+    sunColor: { value: new THREE.Color(0xff9a3d) },
+    sunI: { value: 1 },
   };
-  const mat = new THREE.ShaderMaterial({
+  const skyMat = new THREE.ShaderMaterial({
     uniforms,
     side: THREE.BackSide,
     depthWrite: false,
@@ -249,74 +75,350 @@ export function makeSky(scene) {
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: `
-      uniform vec3 topColor; uniform vec3 midColor; uniform vec3 botColor;
-      uniform vec3 sunDir; uniform vec3 sunColor;
+      uniform vec3 topColor;
+      uniform vec3 horizonColor;
+      uniform vec3 sunDir;
+      uniform vec3 sunColor;
+      uniform float sunI;
       varying vec3 vDir;
       void main() {
-        float h = clamp(vDir.y, -0.12, 1.0);
-        // The blend runs in linear light, where a bright peach swamps a
-        // dark blue at any small mix factor — so the ramp to blue is
-        // steep: the horizon band stays peach, but by a third of the way
-        // up the dome the sky is genuinely blue. A pale haze sits right
-        // at the skyline so towers stay separated.
-        vec3 warm = h < 0.06 ? mix(botColor, midColor, (h + 0.12) / 0.18) : midColor;
-        vec3 col = mix(warm, topColor, smoothstep(0.05, 0.38, h));
-        col = mix(col, vec3(1.0, 0.82, 0.58), smoothstep(0.16, 0.0, abs(h - 0.05)) * 0.22);
-        float s = max(dot(normalize(vDir), normalize(sunDir)), 0.0);
-        col += sunColor * (pow(s, 220.0) * 1.0 + pow(s, 10.0) * 0.05);
+        vec3 d = normalize(vDir);
+        float h = max(d.y, 0.0);
+        vec3 col = mix(horizonColor, topColor, pow(h, 0.55));
+        float s = max(dot(d, normalize(sunDir)), 0.0);
+        col += sunColor * (pow(s, 350.0) * 2.2 + pow(s, 10.0) * 0.30) * sunI;
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(640, 24, 16), mat);
-  scene.add(dome);
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 24, 16), skyMat);
+  scene.add(sky);
 
-  // Drifting clouds: soft sprites far above the city.
-  const cloudTex = glowTexture('rgba(255,235,220,0.85)', 'rgba(255,235,220,0)');
+  const cloudTex = cloudTexture();
   const clouds = [];
+  const rng = mulberry32(77);
   for (let i = 0; i < 14; i++) {
-    const m = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, opacity: 0.34, depthWrite: false, fog: false });
-    const s = new THREE.Sprite(m);
-    const sc = 90 + Math.random() * 120;
-    s.scale.set(sc, sc * 0.36, 1);
-    s.position.set(-420 + Math.random() * 840, 95 + Math.random() * 70, -420 + Math.random() * 840);
-    s.userData.drift = 1.2 + Math.random() * 1.6;
-    scene.add(s);
-    clouds.push(s);
+    const mat = new THREE.SpriteMaterial({
+      map: cloudTex,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.55 + rng() * 0.25,
+      depthWrite: false,
+      fog: false,
+    });
+    const spr = new THREE.Sprite(mat);
+    spr.position.set(-500 + rng() * 1000, 130 + rng() * 90, -500 + rng() * 1000);
+    spr.scale.set(120 + rng() * 160, 34 + rng() * 30, 1);
+    spr.userData.drift = 1.5 + rng() * 2.5;
+    scene.add(spr);
+    clouds.push(spr);
   }
+
+  const top = new THREE.Color();
+  const horizon = new THREE.Color();
+  const sunC = new THREE.Color();
+  const fogC = new THREE.Color();
+  const sunDir = new THREE.Vector3();
+
   return {
     uniforms,
-    drift(dt) {
+    clouds,
+    update(dayT, dt, timeSec) {
+      const { a, b, k } = stopAt(dayT);
+      mixColor(a.top, b.top, k, top);
+      mixColor(a.horizon, b.horizon, k, horizon);
+      mixColor(a.sun, b.sun, k, sunC);
+      mixColor(a.fog, b.fog, k, fogC);
+      uniforms.topColor.value.copy(top);
+      uniforms.horizonColor.value.copy(horizon);
+      uniforms.sunColor.value.copy(sunC);
+      uniforms.sunI.value = lerp(a.sunI, b.sunI, k);
+      // Sun travels east to west across the sky.
+      const ang = (dayT - 0.25) * Math.PI * 2;
+      sunDir.set(Math.cos(ang) * 0.85, Math.max(0.08, Math.sin(ang)), 0.35).normalize();
+      uniforms.sunDir.value.copy(sunDir);
+      scene.fog.color.copy(fogC);
       for (const c of clouds) {
         c.position.x += c.userData.drift * dt;
-        if (c.position.x > 460) c.position.x = -460;
+        if (c.position.x > 560) c.position.x = -560;
+        c.material.opacity = 0.35 + 0.3 * (0.5 + 0.5 * Math.sin(timeSec * 0.05 + c.position.z));
       }
+      return {
+        sunDir,
+        sunIntensity: lerp(a.sunI, b.sunI, k),
+        hemiIntensity: lerp(a.hemi, b.hemi, k),
+        windowGlow: lerp(a.glow, b.glow, k),
+        fogColor: fogC,
+      };
     },
   };
 }
 
-/** Sun + hemisphere rig with a tight shadow camera over the play area.
- *  A cool fill light from the east keeps shadow-side facades readable —
- *  at golden hour the sun is low in the west, so east faces would
- *  otherwise read as black slabs. The fill casts no shadows. */
-export function makeLightRig(scene) {
-  const sun = new THREE.DirectionalLight(0xffb36b, 2.6);
+/** One shadow-casting sun, a sky hemisphere light and a cool east fill. */
+export function createLightRig(scene) {
+  const sun = new THREE.DirectionalLight(0xffe9c0, 1.1);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -170;
-  sun.shadow.camera.right = 170;
-  sun.shadow.camera.top = 170;
-  sun.shadow.camera.bottom = -170;
+  sun.shadow.camera.left = -190;
+  sun.shadow.camera.right = 190;
+  sun.shadow.camera.top = 190;
+  sun.shadow.camera.bottom = -190;
   sun.shadow.camera.near = 10;
-  sun.shadow.camera.far = 520;
+  sun.shadow.camera.far = 800;
   sun.shadow.bias = -0.0006;
-  sun.shadow.normalBias = 0.6;
   scene.add(sun);
   scene.add(sun.target);
-  const hemi = new THREE.HemisphereLight(0xffd9a0, 0x3a3450, 1.05);
+
+  const hemi = new THREE.HemisphereLight(0xbfd8ee, 0x5a4a3a, 0.7);
   scene.add(hemi);
-  const fill = new THREE.DirectionalLight(0x8aa8d8, 0.5);
-  fill.position.set(180, 90, -40);
+
+  // Cool fill from the sea side so shadow-side facades stay readable at dusk.
+  const fill = new THREE.DirectionalLight(0x9fb8dd, 0.35);
+  fill.position.set(300, 140, 60);
   scene.add(fill);
   scene.add(fill.target);
-  return { sun, hemi, fill };
+
+  return {
+    sun,
+    hemi,
+    fill,
+    update(skyInfo, focus) {
+      const d = skyInfo.sunDir;
+      sun.position.set(focus.x + d.x * 420, Math.max(60, focus.y + d.y * 420), focus.z + d.z * 420);
+      sun.target.position.set(focus.x, 0, focus.z);
+      sun.intensity = skyInfo.sunIntensity * 1.6;
+      sun.color.copy(skyInfo.sunColor || 0xffe9c0);
+      hemi.intensity = skyInfo.hemiIntensity;
+      fill.intensity = 0.2 + 0.25 * (1 - skyInfo.sunIntensity / 1.5);
+    },
+  };
+}
+
+// ---------------------------------------------------------------- textures
+
+/** Soft radial glow used by lamps, neon and light halos. */
+export function glowTexture() {
+  return new THREE.CanvasTexture(
+    makeCanvas(64, 64, (g) => {
+      const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30);
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 64, 64);
+    })
+  );
+}
+
+/** Puffy cloud blob. */
+export function cloudTexture() {
+  return new THREE.CanvasTexture(
+    makeCanvas(128, 64, (g) => {
+      g.clearRect(0, 0, 128, 64);
+      for (let i = 0; i < 9; i++) {
+        const x = 20 + Math.random() * 88;
+        const y = 26 + Math.random() * 16;
+        const r = 12 + Math.random() * 16;
+        const grad = g.createRadialGradient(x, y, 1, x, y, r);
+        grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = grad;
+        g.beginPath();
+        g.arc(x, y, r, 0, Math.PI * 2);
+        g.fill();
+      }
+    })
+  );
+}
+
+const FACADE_PALETTES = [
+  { base: '#8a7a68', trim: '#6e5f4f', glass: '#2b3a4a' },
+  { base: '#7d8a99', trim: '#5d6a78', glass: '#27333f' },
+  { base: '#a08a6a', trim: '#7d6a50', glass: '#2f3a42' },
+  { base: '#6f7f7a', trim: '#55635e', glass: '#26323a' },
+  { base: '#96684f', trim: '#744e3a', glass: '#33291f' },
+  { base: '#5f6f8a', trim: '#49566d', glass: '#232c3d' },
+];
+
+/** A building face: lit and dark windows over a tinted wall, with trim lines. */
+export function facadeTexture(rng, variant) {
+  const p = FACADE_PALETTES[variant % FACADE_PALETTES.length];
+  const tex = new THREE.CanvasTexture(
+    makeCanvas(128, 256, (g, w, h) => {
+      g.fillStyle = p.base;
+      g.fillRect(0, 0, w, h);
+      // Subtle vertical shading so floors read apart.
+      const shade = g.createLinearGradient(0, 0, 0, h);
+      shade.addColorStop(0, 'rgba(255,255,255,0.10)');
+      shade.addColorStop(0.5, 'rgba(0,0,0,0)');
+      shade.addColorStop(1, 'rgba(0,0,0,0.28)');
+      g.fillStyle = shade;
+      g.fillRect(0, 0, w, h);
+      // Window grid.
+      const cols = 5;
+      const rows = 10;
+      const cw = w / cols;
+      const ch = h / rows;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const x = c * cw + cw * 0.22;
+          const y = r * ch + ch * 0.22;
+          const ww = cw * 0.56;
+          const hh = ch * 0.6;
+          const lit = rng() < 0.34;
+          g.fillStyle = lit ? '#ffd27a' : p.glass;
+          if (lit && rng() < 0.25) g.fillStyle = '#ffb35c';
+          g.fillRect(x, y, ww, hh);
+          g.fillStyle = 'rgba(255,255,255,0.12)';
+          g.fillRect(x, y, ww, hh * 0.25);
+        }
+      }
+      // Ground floor band and trim.
+      g.fillStyle = p.trim;
+      g.fillRect(0, h - 18, w, 18);
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let r = 0; r < rows; r++) g.fillRect(0, r * ch, w, 2);
+    })
+  );
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** A glowing neon sign board with text. */
+export function neonTexture(text, fg, bg) {
+  const tex = new THREE.CanvasTexture(
+    makeCanvas(512, 96, (g, w, h) => {
+      g.fillStyle = bg;
+      g.fillRect(0, 0, w, h);
+      g.strokeStyle = fg;
+      g.lineWidth = 4;
+      g.strokeRect(6, 6, w - 12, h - 12);
+      g.font = 'bold 52px Arial, sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.shadowColor = fg;
+      g.shadowBlur = 22;
+      g.fillStyle = fg;
+      g.fillText(text, w / 2, h / 2 + 2);
+      g.shadowBlur = 0;
+      g.fillStyle = '#ffffff';
+      g.font = 'bold 50px Arial, sans-serif';
+      g.fillText(text, w / 2, h / 2 + 2);
+    })
+  );
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Asphalt strip with a dashed centre line, repeated along the road. */
+export function roadTexture() {
+  const tex = new THREE.CanvasTexture(
+    makeCanvas(128, 128, (g, w, h) => {
+      g.fillStyle = '#2b2e33';
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 260; i++) {
+        g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.12)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      g.fillStyle = '#d8c25a';
+      g.fillRect(w / 2 - 2, 8, 4, 34);
+      g.fillRect(w / 2 - 2, 86, 4, 34);
+      g.fillStyle = 'rgba(255,255,255,0.5)';
+      g.fillRect(4, 0, 3, h);
+      g.fillRect(w - 7, 0, 3, h);
+    })
+  );
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Sidewalk slabs. */
+export function sidewalkTexture() {
+  const tex = new THREE.CanvasTexture(
+    makeCanvas(128, 128, (g, w, h) => {
+      g.fillStyle = '#8f9598';
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 160; i++) {
+        g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.10)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      g.strokeStyle = 'rgba(0,0,0,0.28)';
+      g.lineWidth = 2;
+      g.strokeRect(1, 1, w - 2, h - 2);
+      g.beginPath();
+      g.moveTo(w / 2, 0);
+      g.lineTo(w / 2, h);
+      g.moveTo(0, h / 2);
+      g.lineTo(w, h / 2);
+      g.stroke();
+    })
+  );
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Warm beach sand. */
+export function sandTexture() {
+  const tex = new THREE.CanvasTexture(
+    makeCanvas(128, 128, (g, w, h) => {
+      g.fillStyle = '#d9b98a';
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 420; i++) {
+        g.fillStyle = Math.random() < 0.5 ? 'rgba(255,240,200,0.25)' : 'rgba(120,90,50,0.20)';
+        g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+    })
+  );
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// ---------------------------------------------------------------- shared caches
+
+const geoCache = new Map();
+const matCache = new Map();
+
+/** One shared unit box; scale the mesh, never the geometry. */
+export function unitBox() {
+  if (!geoCache.has('box')) geoCache.set('box', new THREE.BoxGeometry(1, 1, 1));
+  return geoCache.get('box');
+}
+
+export function unitCylinder(radial = 10) {
+  const key = `cyl${radial}`;
+  if (!geoCache.has(key)) geoCache.set(key, new THREE.CylinderGeometry(1, 1, 1, radial));
+  return geoCache.get(key);
+}
+
+export function unitSphere(w = 12, h = 10) {
+  const key = `sph${w}x${h}`;
+  if (!geoCache.has(key)) geoCache.set(key, new THREE.SphereGeometry(1, w, h));
+  return geoCache.get(key);
+}
+
+export function unitCone(radial = 8) {
+  const key = `cone${radial}`;
+  if (!geoCache.has(key)) geoCache.set(key, new THREE.ConeGeometry(1, 1, radial));
+  return geoCache.get(key);
+}
+
+export function unitPlane() {
+  if (!geoCache.has('plane')) geoCache.set('plane', new THREE.PlaneGeometry(1, 1));
+  return geoCache.get('plane');
+}
+
+/** A cached standard material by key; the maker runs once. */
+export function stdMat(key, make) {
+  if (!matCache.has(key)) matCache.set(key, make());
+  return matCache.get(key);
+}
+
+export function basicMat(key, make) {
+  if (!matCache.has(key)) matCache.set(key, make());
+  return matCache.get(key);
 }

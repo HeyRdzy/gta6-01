@@ -1,201 +1,290 @@
-// Shooting for Solmar Heat v3: hitscan fire with a glowing tracer, a
-// muzzle-flash light that pops the frame, impact sparks, a 12-round
-// magazine, R to reload, and Kestrel rivals who shoot back. Firing in the
-// open raises the heat — the PD hears it too.
+// Combat: Rio's pistol, muzzle flash, tracers, impact sparks and the rival
+// crews that missions spawn. Rivals carry health bars and shoot back badly.
 
 import * as THREE from 'three';
-import { clampNum, flatDist } from './util.js';
-import { buildPerson, walkCycle } from './traffic.js';
-import { glowTexture, sharedGeo } from './visuals.js';
+import { glowTexture, stdMat, unitBox, unitSphere } from './visuals.js';
+import { clamp, dist2d, mulberry32, range } from './util.js';
 
-const MAG = 12;
-const RIVAL_HP = 100;
-const SHOT_DAMAGE = 34;
+function buildRival() {
+  const group = new THREE.Group();
+  const jacket = stdMat('rivaljacket', () => new THREE.MeshStandardMaterial({ color: 0x3a2a2a, roughness: 0.9 }));
+  const pants = stdMat('rivalpants', () => new THREE.MeshStandardMaterial({ color: 0x1e2228, roughness: 0.95 }));
+  const skin = stdMat('rivalskin', () => new THREE.MeshStandardMaterial({ color: 0xc98d5f, roughness: 0.8 }));
+  const band = stdMat('bandana', () => new THREE.MeshStandardMaterial({ color: 0xc22a1e, roughness: 0.8 }));
 
-function rivalPerson(x, z) {
-  const person = buildPerson(0x3a3a44, 0x222226, 0xb08a68);
-  const g = person.group;
-  const gun = new THREE.Mesh(
-    sharedGeo('rivalGun', () => new THREE.BoxGeometry(0.14, 0.14, 0.95)),
-    new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5, metalness: 0.7 }),
+  const torso = new THREE.Mesh(unitBox(), jacket);
+  torso.scale.set(0.58, 0.74, 0.34);
+  torso.position.y = 1.2;
+  torso.castShadow = true;
+  group.add(torso);
+  const head = new THREE.Mesh(unitSphere(10, 8), skin);
+  head.scale.setScalar(0.22);
+  head.position.y = 1.76;
+  head.castShadow = true;
+  group.add(head);
+  const bandana = new THREE.Mesh(unitBox(), band);
+  bandana.scale.set(0.46, 0.12, 0.46);
+  bandana.position.y = 1.9;
+  group.add(bandana);
+
+  const limbs = {};
+  const mk = (mat, w, len, px, py) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(px, py, 0);
+    const seg = new THREE.Mesh(unitBox(), mat);
+    seg.scale.set(w, len, w);
+    seg.position.y = -len / 2;
+    seg.castShadow = true;
+    pivot.add(seg);
+    group.add(pivot);
+    return pivot;
+  };
+  limbs.armL = mk(skin, 0.17, 0.64, -0.38, 1.52);
+  limbs.armR = mk(skin, 0.17, 0.64, 0.38, 1.52);
+  limbs.legL = mk(pants, 0.21, 0.74, -0.16, 0.84);
+  limbs.legR = mk(pants, 0.21, 0.74, 0.16, 0.84);
+
+  // Health bar: a dark back sprite and a red front sprite that shrinks.
+  const barBg = new THREE.Sprite(
+    new THREE.SpriteMaterial({ color: 0x1a1a1a, depthWrite: false })
   );
-  gun.position.set(0.42, 1.45, 0.4);
-  person.rig.add(gun);
-  // Kestrel red bandana.
-  const band = new THREE.Mesh(
-    sharedGeo('bandana', () => new THREE.CylinderGeometry(0.4, 0.4, 0.16, 12)),
-    new THREE.MeshStandardMaterial({ color: 0xc23b2e, roughness: 0.9 }),
+  barBg.scale.set(1.3, 0.16, 1);
+  barBg.position.y = 2.25;
+  group.add(barBg);
+  const barFg = new THREE.Sprite(
+    new THREE.SpriteMaterial({ color: 0xff2a2a, depthWrite: false })
   );
-  band.position.y = 2.3;
-  person.rig.add(band);
-  // Health bar above the head: dark backing + a red bar that shrinks
-  // left-aligned as the rival takes hits. Sprites always face the camera,
-  // so the bar reads from any angle in the fight.
-  const bgMat = new THREE.SpriteMaterial({ color: 0x1a1a1a, depthWrite: false });
-  const barBg = new THREE.Sprite(bgMat);
-  barBg.scale.set(1.42, 0.22, 1);
-  barBg.position.set(0, 2.78, 0);
-  g.add(barBg);
-  const fgMat = new THREE.SpriteMaterial({ color: 0xff3b2e, depthWrite: false });
-  const barFg = new THREE.Sprite(fgMat);
-  barFg.center.set(0, 0.5);
-  barFg.scale.set(1.3, 0.14, 1);
-  barFg.position.set(-0.65, 2.78, 0);
-  g.add(barFg);
-  g.position.set(x, 0, z);
-  return { person, barFg };
+  barFg.scale.set(1.24, 0.1, 1);
+  barFg.position.y = 2.25;
+  group.add(barFg);
+  return { group, limbs, barBg, barFg };
 }
 
-export class Combat {
-  constructor(scene, state) {
-    this.scene = scene;
-    this.state = state;
-    this.ammo = MAG;
-    this.reloading = 0;
-    this.rivals = [];
-    this.tracers = [];
-    this.sparks = [];
-    this.ray = new THREE.Raycaster();
-    // One reusable muzzle light + flash sprite: moved, never re-created.
-    this.flashLight = new THREE.PointLight(0xffc06a, 0, 22, 1.8);
-    this.scene.add(this.flashLight);
-    this.flashLightT = 0;
-    this.flashSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: glowTexture('rgba(255,210,130,1)', 'rgba(255,120,40,0)'),
-      transparent: true, opacity: 0, depthWrite: false,
-    }));
-    this.flashSprite.scale.set(3.2, 3.2, 1);
-    this.scene.add(this.flashSprite);
-    this._sparkGeo = sharedGeo('spark', () => new THREE.SphereGeometry(0.09, 6, 4));
-    this._sparkMat = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+export function createCombat(scene, world, hero, traffic, cops, state, display, sound) {
+  const flashLight = new THREE.PointLight(0xffc06a, 0, 14, 1.6);
+  scene.add(flashLight);
+  const flashSprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffd27a, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+  );
+  flashSprite.scale.set(1.6, 1.6, 1);
+  scene.add(flashSprite);
+  let flashTime = 0;
+
+  const tracers = [];
+  for (let i = 0; i < 6; i++) {
+    const t = new THREE.Mesh(
+      unitBox(),
+      new THREE.MeshBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    scene.add(t);
+    tracers.push({ mesh: t, life: 0 });
+  }
+  let tracerIdx = 0;
+
+  const sparks = [];
+  for (let i = 0; i < 8; i++) {
+    const s = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffb35c, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
+    );
+    scene.add(s);
+    sparks.push({ spr: s, life: 0, vx: 0, vy: 0, vz: 0 });
   }
 
-  clearRivals() {
-    for (const r of this.rivals) this.scene.remove(r.mesh);
-    this.rivals = [];
-  }
+  const combat = {
+    ammo: 12,
+    maxAmmo: 12,
+    reloading: false,
+    reloadTimer: 0,
+    rivals: [],
 
-  spawnRivals(spots) {
-    this.clearRivals();
-    for (const [x, z] of spots) {
-      const { person, barFg } = rivalPerson(x, z);
-      this.scene.add(person.group);
-      this.rivals.push({ mesh: person.group, person, barFg, hp: RIVAL_HP, shootT: 1 + Math.random() });
-    }
-  }
-
-  rivalsLeft() { return this.rivals.length; }
-
-  _burst(point, n = 6) {
-    for (let i = 0; i < n; i++) {
-      const s = new THREE.Mesh(this._sparkGeo, this._sparkMat);
-      s.position.copy(point);
-      s.userData.v = new THREE.Vector3(
-        (Math.random() - 0.5) * 7, Math.random() * 5 + 1, (Math.random() - 0.5) * 7,
-      );
-      s.userData.life = 0.4;
-      this.scene.add(s);
-      this.sparks.push(s);
-    }
-  }
-
-  _flashAt(point) {
-    this.flashLight.position.copy(point);
-    this.flashLight.intensity = 26;
-    this.flashLightT = 0.06;
-    this.flashSprite.position.copy(point);
-    this.flashSprite.material.opacity = 0.95;
-  }
-
-  shoot(origin, dir, hooks) {
-    if (this.reloading > 0 || this.ammo <= 0) return false;
-    this.ammo--;
-    this.state.addHeat(6);
-    this.ray.set(origin, dir);
-    this.ray.far = 90;
-    let hitPoint = null;
-    let hitRival = null;
-    if (this.rivals.length > 0) {
-      const hits = this.ray.intersectObjects(this.rivals.map((r) => r.mesh), true);
-      if (hits.length > 0) {
-        hitPoint = hits[0].point;
-        let o = hits[0].object;
-        while (o && o.parent !== this.scene) o = o.parent;
-        hitRival = this.rivals.find((r) => r.mesh === o) || null;
+    spawnRivals(x, z, count) {
+      const rng = mulberry32((Math.random() * 1e9) | 0);
+      for (let i = 0; i < count; i++) {
+        const r = buildRival();
+        const px = x + range(rng, -9, 9);
+        const pz = z + range(rng, -9, 9);
+        r.group.position.set(px, 0, pz);
+        scene.add(r.group);
+        combat.rivals.push({
+          mesh: r.group,
+          limbs: r.limbs,
+          barBg: r.barBg,
+          barFg: r.barFg,
+          x: px,
+          z: pz,
+          health: 3,
+          maxHealth: 3,
+          phase: rng() * Math.PI * 2,
+          shootTimer: 1 + rng() * 1.5,
+          dead: false,
+        });
       }
-    }
-    if (!hitPoint) hitPoint = origin.clone().add(dir.clone().multiplyScalar(60));
-    this._flashAt(origin.clone().add(dir.clone().multiplyScalar(1.6)));
-    if (hitRival) {
-      hitRival.hp -= SHOT_DAMAGE;
-      this._burst(hitPoint, 8);
-      if (hitRival.hp <= 0) {
-        this.scene.remove(hitRival.mesh);
-        this.rivals = this.rivals.filter((r) => r !== hitRival);
-        if (hooks.onKill) hooks.onKill();
-      }
-    } else {
-      this._burst(hitPoint, 3);
-    }
-    const geo = new THREE.BufferGeometry().setFromPoints([origin, hitPoint]);
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.95 }));
-    this.scene.add(line);
-    this.tracers.push({ line, t: 0.09 });
-    if (hooks.onShot) hooks.onShot();
-    return true;
-  }
+    },
 
-  reload() {
-    if (this.reloading > 0 || this.ammo === MAG) return;
-    this.reloading = 1.1;
-  }
+    clearRivals() {
+      for (const r of combat.rivals) scene.remove(r.mesh);
+      combat.rivals.length = 0;
+    },
 
-  update(dt, hero, hooks) {
-    if (this.reloading > 0) {
-      this.reloading -= dt;
-      if (this.reloading <= 0) { this.ammo = MAG; this.reloading = 0; }
-    }
-    if (this.flashLightT > 0) {
-      this.flashLightT -= dt;
-      if (this.flashLightT <= 0) {
-        this.flashLight.intensity = 0;
-        this.flashSprite.material.opacity = 0;
+    reload() {
+      if (combat.reloading || combat.ammo === combat.maxAmmo) return;
+      combat.reloading = true;
+      combat.reloadTimer = 1.1;
+      display.toast('Reloading…');
+    },
+
+    shoot(camera) {
+      if (combat.reloading || combat.ammo <= 0) {
+        if (combat.ammo <= 0) combat.reload();
+        return false;
       }
-    }
-    for (const t of this.tracers) t.t -= dt;
-    this.tracers = this.tracers.filter((t) => {
-      if (t.t <= 0) { this.scene.remove(t.line); return false; }
-      t.line.material.opacity = t.t / 0.09;
-      return true;
-    });
-    this.sparks = this.sparks.filter((s) => {
-      s.userData.life -= dt;
-      if (s.userData.life <= 0) { this.scene.remove(s); return false; }
-      s.userData.v.y -= 14 * dt;
-      s.position.addScaledVector(s.userData.v, dt);
-      return true;
-    });
-    for (const r of this.rivals) {
-      r.shootT -= dt;
-      // Health bar tracks the damage: full width at spawn, empty at death.
-      r.barFg.scale.x = 1.3 * clampNum(r.hp / RIVAL_HP, 0, 1);
-      const d = flatDist(r.mesh.position.x, r.mesh.position.z, hero.x, hero.z);
-      r.mesh.lookAt(hero.x, 0, hero.z);
-      walkCycle(r.person, dt, 0); // rivals hold their ground, guns raised
-      if (r.shootT <= 0 && d < 42 && !hero.driving) {
-        r.shootT = 1.3 + Math.random() * 0.7;
-        const from = r.mesh.position.clone().add(new THREE.Vector3(0, 1.5, 0));
-        this._flashAt(from);
-        if (Math.random() < 0.55) {
-          this.state.hurt(7);
-          if (hooks.onHurt) hooks.onHurt();
+      combat.ammo--;
+      sound.gunshot();
+      state.addWanted(0); // firing alone draws attention only when it lands
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      const origin = new THREE.Vector3();
+      camera.getWorldPosition(origin);
+      // Muzzle flash at Rio's gun hand.
+      const muzzle = new THREE.Vector3(hero.x, hero.y + 1.35, hero.z);
+      if (hero.driving && hero.car) {
+        muzzle.set(hero.car.mesh.position.x, 1.4, hero.car.mesh.position.z);
+      }
+      flashLight.position.copy(muzzle);
+      flashLight.intensity = 26;
+      flashSprite.position.copy(muzzle);
+      flashSprite.material.opacity = 0.9;
+      flashTime = 0.06;
+
+      // Nearest rival inside a narrow cone of the camera ray.
+      let hitRival = null;
+      let hitDist = 70;
+      for (const r of combat.rivals) {
+        if (r.dead) continue;
+        const to = new THREE.Vector3(r.x - origin.x, 1.3 - origin.y, r.z - origin.z);
+        const d = to.length();
+        if (d > hitDist) continue;
+        to.normalize();
+        const angle = Math.acos(clamp(to.dot(dir), -1, 1));
+        if (angle < 0.09) {
+          hitRival = r;
+          hitDist = d;
         }
-        const to = new THREE.Vector3(hero.x, 1.2, hero.z);
-        const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
-        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff6a5a, transparent: true, opacity: 0.9 }));
-        this.scene.add(line);
-        this.tracers.push({ line, t: 0.09 });
       }
+      const end = origin.clone().add(dir.clone().multiplyScalar(hitRival ? hitDist : 46));
+      const t = tracers[tracerIdx++ % tracers.length];
+      const mid = muzzle.clone().add(end).multiplyScalar(0.5);
+      t.mesh.position.copy(mid);
+      t.mesh.lookAt(end);
+      t.mesh.scale.set(0.06, 0.06, muzzle.distanceTo(end));
+      t.mesh.material.opacity = 0.9;
+      t.life = 0.09;
+      if (hitRival) {
+        hitRival.health--;
+        hitRival.barFg.scale.x = 1.24 * Math.max(0, hitRival.health / hitRival.maxHealth);
+        burstSparks(end.x, end.y, end.z);
+        state.addWanted(1);
+        if (hitRival.health <= 0) {
+          hitRival.dead = true;
+          hitRival.mesh.rotation.z = Math.PI / 2;
+          hitRival.barBg.visible = false;
+          hitRival.barFg.visible = false;
+          state.kills++;
+          display.toast('Rival down');
+        }
+      } else {
+        // Stray shots can hit a car or a pedestrian and raise the heat.
+        for (const c of traffic.cars) {
+          const to = new THREE.Vector3(c.mesh.position.x - origin.x, 0.8 - origin.y, c.mesh.position.z - origin.z);
+          const d = to.length();
+          if (d < 46) {
+            to.normalize();
+            if (Math.acos(clamp(to.dot(dir), -1, 1)) < 0.07) {
+              state.addWanted(1);
+              burstSparks(end.x, 0.8, end.z);
+              break;
+            }
+          }
+        }
+      }
+      return true;
+    },
+
+    update(dt, camera) {
+      if (combat.reloading) {
+        combat.reloadTimer -= dt;
+        if (combat.reloadTimer <= 0) {
+          combat.ammo = combat.maxAmmo;
+          combat.reloading = false;
+        }
+      }
+      if (flashTime > 0) {
+        flashTime -= dt;
+        if (flashTime <= 0) {
+          flashLight.intensity = 0;
+          flashSprite.material.opacity = 0;
+        }
+      }
+      for (const t of tracers) {
+        if (t.life > 0) {
+          t.life -= dt;
+          if (t.life <= 0) t.mesh.material.opacity = 0;
+        }
+      }
+      for (const s of sparks) {
+        if (s.life <= 0) continue;
+        s.life -= dt;
+        s.spr.position.x += s.vx * dt;
+        s.spr.position.y += s.vy * dt;
+        s.spr.position.z += s.vz * dt;
+        s.vy -= 6 * dt;
+        s.spr.material.opacity = Math.max(0, s.life * 2.4);
+      }
+      // Rivals face Rio, shuffle and shoot back.
+      for (const r of combat.rivals) {
+        if (r.dead) continue;
+        const dx = hero.x - r.x;
+        const dz = hero.z - r.z;
+        const d = Math.hypot(dx, dz);
+        r.mesh.rotation.y = Math.atan2(dx, dz);
+        r.phase += dt * 2.2;
+        const sway = Math.sin(r.phase) * 0.5;
+        r.limbs.armL.rotation.x = sway;
+        r.limbs.armR.rotation.x = -sway;
+        if (d < 30) {
+          r.shootTimer -= dt;
+          if (r.shootTimer <= 0) {
+            r.shootTimer = 1.6 + Math.random() * 1.2;
+            if (Math.random() < 0.38) {
+              hero.damage(5 + Math.random() * 5, 'rival shot');
+              sound.rivalShot();
+              burstSparks(hero.x, hero.y + 1.3, hero.z);
+            }
+          }
+        }
+        if (d > 34) {
+          // Close in slowly so the fight stays in the yard.
+          const step = 2.2 * dt;
+          r.x += (dx / d) * step;
+          r.z += (dz / d) * step;
+          r.mesh.position.set(r.x, 0, r.z);
+        }
+      }
+    },
+  };
+
+  function burstSparks(x, y, z) {
+    for (let i = 0; i < 3; i++) {
+      const s = sparks.find((sp) => sp.life <= 0);
+      if (!s) return;
+      s.spr.position.set(x, y, z);
+      s.vx = (Math.random() - 0.5) * 6;
+      s.vy = Math.random() * 4;
+      s.vz = (Math.random() - 0.5) * 6;
+      s.life = 0.35;
+      s.spr.material.opacity = 0.9;
     }
   }
+
+  return combat;
 }
