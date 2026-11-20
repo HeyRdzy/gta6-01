@@ -1,6 +1,7 @@
 // Mara Voss's five jobs, the gold beacon that marks them, taxi fares and
 // stunt ramps. Missions run in order; each step is a goto, a fight or an
 // escape, and finishing one pays out and unlocks the next.
+// Round 3 note: missions are data first — the defs above are the whole story, the code just runs them.
 
 import * as THREE from 'three';
 import { glowTexture, stdMat, unitBox, unitCylinder } from './visuals.js';

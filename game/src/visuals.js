@@ -1,5 +1,6 @@
 // Rendering setup, sky, lights and every texture the city is made of.
 // All textures are drawn on canvas at boot, so the game loads no images.
+// Round 3 note: canvas textures keep the whole game offline — no image files are fetched at runtime.
 
 import * as THREE from 'three';
 import { clamp, clamp01, lerp, makeCanvas, mulberry32 } from './util.js';

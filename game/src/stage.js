@@ -1,6 +1,7 @@
 // Staged scenes for the four screenshots. Each pose puts the camera, Rio,
 // the cops and the mission into a composed frame at golden hour, then lets
 // the game render a few frames before the shot is taken.
+// Round 3 note: each pose must stay readable at a glance when shrunk to a contact sheet.
 
 /** Pose one staged scene. `game` is the wired-up game from boot.js. */
 

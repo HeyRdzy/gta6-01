@@ -1,6 +1,7 @@
 // Solmar Heat — boot: builds the scene, wires every system together and
 // runs the frame loop. Staged shots (?shot=start|play|chase|mission) pose
 // a scene and set window.__shotReady once it has rendered.
+// Round 3 note: boot is the only module that touches the DOM directly; the rest work on the scene.
 
 import * as THREE from 'three';
 import { createGameState } from './state.js';

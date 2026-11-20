@@ -2,6 +2,7 @@
 // north-west, a park in the south-west, the beach and pier in the east and the
 // dockyard in the south-east. Everything is built from shared boxes, cylinders
 // and canvas textures, and every building registers a collision box.
+// Round 3 note: the city is built once at boot from the seed, so the layout is identical every run.
 
 import * as THREE from 'three';
 import {

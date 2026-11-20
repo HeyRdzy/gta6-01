@@ -1,5 +1,6 @@
 // Small math and random helpers shared by every Solmar Heat module.
 // No game logic lives here, only pure functions so the modules stay testable.
+// Round 3 note: every helper here is deterministic, which is why the city seed reproduces exactly.
 
 export function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
