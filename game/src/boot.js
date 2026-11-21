@@ -1,270 +1,205 @@
-// Solmar Heat — boot: builds the scene, wires every system together and
-// runs the frame loop. Staged shots (?shot=start|play|chase|mission) pose
-// a scene and set window.__shotReady once it has rendered.
-// Round 3 note: boot is the only module that touches the DOM directly; the rest work on the scene.
-
-import * as THREE from 'three';
-import { createGameState } from './state.js';
-import { createRenderer, createSky, createLightRig } from './visuals.js';
-import { buildCity } from './world.js';
-import { createTraffic } from './traffic.js';
-import { createHero } from './hero.js';
-import { createCops } from './cops.js';
-import { createCombat } from './combat.js';
-import { createStory } from './story.js';
-import { createDisplay } from './display.js';
-import { createSound } from './sound.js';
+// Solmar Heat — boot, game loop and rendering. Written fresh for round 4.
+import { CFG } from './config.js';
+import { clamp } from './util.js';
+import { S, resetRun, saveGame, loadGame, addCash } from './state.js';
+import { createWorld, drawWorld } from './world.js';
+import { createVisuals, updateVisuals, drawLighting } from './visuals.js';
 import { createControls } from './controls.js';
+import { createSound } from './sound.js';
+import { createHero, updateHero, drawHero, drawCar } from './hero.js';
+import { createTraffic, updateTraffic, drawTraffic } from './traffic.js';
+import { createCops, updateCops, drawCops } from './cops.js';
+import { createCombat, updateCombat, drawCombat } from './combat.js';
+import { createStory, updateStory, drawBeacon, drawFareMarker, currentStep } from './story.js';
+import { createDisplay, updateDisplay, drawFloaters } from './display.js';
 import { applyShot } from './stage.js';
-import { clamp, damp } from './util.js';
 
-const params = new URLSearchParams(location.search);
-const shotName = params.get('shot');
 const canvas = document.getElementById('game');
-const isShot = Boolean(shotName);
+const ctx = canvas.getContext('2d');
 
-const state = createGameState();
-if (!isShot) state.load(); // staged shots always start from a clean state
-if (isShot) state.started = true;
-
-const renderer = createRenderer(canvas);
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xe8a06a, 90, 460);
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2500);
-camera.position.set(0, 5, 104);
-
-const sky = createSky(scene);
-const lights = createLightRig(scene);
-const world = buildCity(scene);
-const traffic = createTraffic(scene, world);
-
-// The display is built last (it needs hero/story/cops/combat), but hero,
-// cops, combat and story call display.toast during play, so they share a
-// proxy that the real display is copied onto once it exists.
-const displayProxy = {};
-const sound = createSound(state);
-const hero = createHero(scene, world, traffic, state, displayProxy);
-const cops = createCops(scene, world, hero, state, displayProxy);
-const combat = createCombat(scene, world, hero, traffic, cops, state, displayProxy, sound);
-const story = createStory(scene, hero, combat, state, displayProxy, sound);
-story.landmarks = world.landmarks;
-const display = createDisplay(state, hero, story, cops, combat);
-Object.assign(displayProxy, display);
-
-const game = {
+const G = {
   canvas,
-  hero,
-  state,
-  story,
-  combat,
-  cops,
-  display,
-  traffic,
-  world,
-  camera,
-  shotCamera: null,
+  ctx,
+  vw: 1280,
+  vh: 720,
+  scale: 2,
+  S,
+  CFG,
+  world: null,
+  visuals: null,
+  input: null,
+  sound: null,
+  hero: null,
+  traffic: null,
+  cops: null,
+  combat: null,
+  story: null,
+  display: null,
+  effects: [],
+  tracers: [],
+  frames: 0,
+  shotName: null,
+  shotZoom: 1,
 };
-const controls = createControls({ ...game, sound });
-game.controls = controls;
 
-window.__solmar = { hero, street: traffic, combat, story, cops, state, world };
-window.__debug = { scene, renderer, lights, sky, state, camera, THREE };
-window.__ready = false;
-window.__shotReady = false;
-window.__shotError = null;
-window.__frameCount = 0;
+function resize() {
+  G.vw = window.innerWidth;
+  G.vh = window.innerHeight;
+  canvas.width = G.vw;
+  canvas.height = G.vh;
+  G.scale = clamp(Math.min(G.vw / 430, G.vh / 260), 1.2, 4) * (G.shotZoom || 1);
+}
+window.addEventListener('resize', resize);
+resize();
 
-// Title screen buttons.
-document.getElementById('btn-start').addEventListener('click', () => {
-  sound.ensure();
-  state.started = true;
-  state.paused = false;
-  display.showHud();
-  display.say(story.objectiveLabel());
-  try {
-    const p = canvas.requestPointerLock();
-    if (p && p.catch) p.catch(() => {});
-  } catch (err) {
-    // Headless or unsupported: drag look still works.
-  }
+G.world = createWorld(G);
+G.visuals = createVisuals();
+G.input = createControls(G);
+G.sound = createSound();
+G.hero = createHero(G);
+G.traffic = createTraffic(G);
+G.cops = createCops(G);
+G.combat = createCombat(G);
+G.story = createStory(G);
+G.display = createDisplay(G);
+G.effects = [];
+G.tracers = [];
+
+// ---- Buttons ---------------------------------------------------------------
+document.getElementById('start-btn').addEventListener('click', () => {
+  G.sound.ensure();
+  resetRun();
+  G.display.hideTitle();
+  S.mode = 'playing';
+  G.display.setObjective('Sunset Courier — deliver the package to the pier');
+  G.display.phone('Mara: Rio. Five jobs, $3,400. First one is easy — pier boat, sunset. Go.');
 });
-document.getElementById('btn-resume').addEventListener('click', () => {
-  state.paused = false;
-  display.hidePause();
+document.getElementById('resume-btn').addEventListener('click', () => {
+  S.mode = 'playing';
+  G.display.hidePause();
 });
-document.getElementById('btn-restart').addEventListener('click', () => {
-  state.save();
-  location.reload();
+document.getElementById('save-btn').addEventListener('click', () => {
+  saveGame();
+  G.display.toast('Game saved.');
 });
-document.getElementById('btn-mute').addEventListener('click', () => controls.toggleMute());
-document.getElementById('btn-continue').addEventListener('click', () => {
-  sound.ensure();
-  state.started = true;
-  state.paused = false;
-  display.showHud();
-  display.say(story.objectiveLabel());
+document.getElementById('restart-btn').addEventListener('click', () => {
+  window.location.reload();
+});
+document.getElementById('retry-btn').addEventListener('click', () => {
+  G.story.respawn();
 });
 
-// Wanted decay: heat fades when the player stays far from every cruiser.
-let wantedTimer = 0;
-function updateWanted(dt) {
-  if (state.wanted <= 0) return;
-  wantedTimer += dt;
-  if (wantedTimer < 1) return;
-  wantedTimer = 0;
-  let nearest = Infinity;
-  for (const c of cops.cruisers) {
-    const d = Math.hypot(c.mesh.position.x - hero.x, c.mesh.position.z - hero.z);
-    if (d < nearest) nearest = d;
-  }
-  if (cops.cruisers.length === 0 || nearest > 55) {
-    state.wantedHeat -= 0.09;
-    if (state.wantedHeat <= 0) {
-      state.wanted = Math.max(0, state.wanted - 1);
-      state.wantedHeat = state.wanted > 0 ? 1 : 0;
-      if (state.wanted === 0) display.toast('You lost the cops');
-    }
-  } else {
-    state.wantedHeat = Math.min(1, state.wantedHeat + 0.05);
-  }
+// Save info on the title screen.
+const save = loadGame();
+if (save) {
+  const el = document.getElementById('save-info');
+  el.textContent = `Save found: $${save.cash.toLocaleString('en-US')} — ${save.missionsDone} job(s) done. Starting fresh keeps your save until you save again.`;
 }
 
-// Camera: damped follow that shortens before it can clip a building.
-const _focus = new THREE.Vector3();
-const _dir = new THREE.Vector3();
-let camDist = 7;
-let fov = 62;
-let shake = 0;
-let lastCarHealth = 100;
-
-function updateCamera(dt) {
-  if (game.shotCamera) {
-    const sc = game.shotCamera;
-    if (sc.orbit) {
-      const a = performance.now() / 1000 / 60;
-      camera.position.set(sc.pos.x + Math.sin(a) * 10, sc.pos.y, sc.pos.z + Math.cos(a) * 6);
-    } else {
-      camera.position.set(sc.pos.x, sc.pos.y, sc.pos.z);
-    }
-    camera.lookAt(sc.look.x, sc.look.y, sc.look.z);
-    if (Math.abs(camera.fov - 58) > 0.05) {
-      camera.fov = 58;
-      camera.updateProjectionMatrix();
-    }
-    return;
-  }
-  hero.headPos(_focus);
-  const dist = hero.driving ? 10.5 : 7;
-  camDist = damp(camDist, dist, 4, dt);
-  const cp = controls.camPitch;
-  const cy = controls.camYaw;
-  _dir.set(Math.sin(cy) * Math.cos(cp), Math.sin(cp), Math.cos(cy) * Math.cos(cp));
-  let d = camDist;
-  for (let t = 1.5; t <= camDist; t += 1.2) {
-    if (world.collides(_focus.x + _dir.x * t, _focus.z + _dir.z * t, 0.6)) {
-      d = Math.max(2.4, t - 1);
-      break;
-    }
-  }
-  const tx = _focus.x + _dir.x * d;
-  const ty = _focus.y + _dir.y * d;
-  const tz = _focus.z + _dir.z * d;
-  camera.position.x = damp(camera.position.x, tx, 9, dt);
-  camera.position.y = damp(camera.position.y, ty, 9, dt);
-  camera.position.z = damp(camera.position.z, tz, 9, dt);
-  if (shake > 0) {
-    camera.position.x += (Math.random() - 0.5) * shake;
-    camera.position.y += (Math.random() - 0.5) * shake * 0.6;
-    camera.position.z += (Math.random() - 0.5) * shake;
-    shake = Math.max(0, shake - dt * 1.8);
-  }
-  camera.lookAt(_focus.x, _focus.y + 0.3, _focus.z);
-  const targetFov = hero.driving ? 62 + Math.min(10, Math.abs(hero.speed) * 0.35) : 62;
-  fov = damp(fov, targetFov, 4, dt);
-  if (Math.abs(camera.fov - fov) > 0.05) {
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
-  }
+// ---- Staged screenshots (?shot=start|play|chase|mission) --------------------
+const params = new URLSearchParams(window.location.search);
+const shot = params.get('shot');
+if (shot) {
+  resize();
+  applyShot(G, shot);
 }
 
-// Frame-time auto-tune: drop the pixel ratio if the machine struggles.
-const pixelSteps = [1.75, 1.25, 1.0];
-let pixelStep = 0;
-let frameEma = 16;
-
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-let saveTimer = 0;
-let shotFrames = 0;
-const clock = new THREE.Clock();
-let timeSec = 0;
-
-function frame() {
+// ---- Main loop ---------------------------------------------------------------
+let last = performance.now();
+function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.05);
-  timeSec += dt;
-  frameEma = frameEma * 0.95 + dt * 1000 * 0.05;
-  if (frameEma > 42 && pixelStep < pixelSteps.length - 1) {
-    pixelStep++;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelSteps[pixelStep]));
-    frameEma = 22;
-  }
+  const dt = clamp((now - last) / 1000, 0, 0.05);
+  last = now;
+  G.frames += 1;
+  G.input.updateMouseWorld();
+  G.sound.setMuted(S.muted);
 
-  const running = state.started && !state.paused;
-  if (running) {
-    state.dayT = (state.dayT + state.daySpeed * dt) % 1;
-    state.playSeconds += dt;
-    hero.update(dt, controls.input, controls.camYaw);
-    controls.input.jump = false;
-    combat.update(dt, camera);
-    cops.update(dt, timeSec);
-    story.update(dt);
-    updateWanted(dt);
-    sound.update(Math.abs(hero.speed), state.wanted);
-    if (hero.driving && lastCarHealth - hero.carHealth > 6) shake = 0.6;
-    lastCarHealth = hero.carHealth;
-    saveTimer += dt;
-    if (saveTimer > 15) {
-      saveTimer = 0;
-      state.save();
+  if (S.mode === 'playing') {
+    S.time += dt;
+    updateVisuals(G, dt);
+    updateStory(G, dt);
+    updateTraffic(G, dt);
+    updateCops(G, dt);
+    updateHero(G, dt);
+    updateCombat(G, dt);
+  } else if (S.mode === 'title') {
+    // Living backdrop behind the title: traffic cruises, sun drifts.
+    S.time += dt;
+    updateVisuals(G, dt);
+    updateTraffic(G, dt);
+    const t = S.time * 0.05;
+    S.camera.x = 60 * Math.cos(t);
+    S.camera.z = 40 * Math.sin(t);
+  }
+  updateDisplay(G, dt);
+
+  // Pause toggle.
+  if (G.input.pressed('Escape')) {
+    if (S.mode === 'playing') {
+      S.mode = 'paused';
+      G.display.showPause();
+    } else if (S.mode === 'paused') {
+      S.mode = 'playing';
+      G.display.hidePause();
     }
   }
 
-  const skyInfo = sky.update(state.dayT, dt, timeSec);
-  lights.update(skyInfo, hero);
-  world.update(dt, timeSec, state.dayT, skyInfo.windowGlow);
-  traffic.update(dt, timeSec, skyInfo.windowGlow > 0.6);
-  updateCamera(dt);
-  if (state.started) display.update(dt, timeSec);
-  renderer.render(scene, camera);
+  // Effects decay.
+  for (const e of G.effects) e.life -= dt;
+  G.effects = G.effects.filter((e) => e.life > 0);
+  for (const t of G.tracers) t.life -= dt;
+  G.tracers = G.tracers.filter((t) => t.life > 0);
 
-  window.__frameCount++;
-  if (!window.__ready) window.__ready = true;
-  if (isShot) {
-    shotFrames++;
-    if (shotFrames >= 6 && !window.__shotReady) window.__shotReady = true;
+  render();
+
+  // Staged screenshots: flag ready after the scene has settled.
+  if (G.shotName && G.frames > 90 && !S.shotReady) {
+    S.shotReady = true;
+    window.__shotReady = true;
   }
 }
 
-// Stage the shot before the first frame, then start the loop.
-if (isShot) {
-  try {
-    applyShot(game, shotName);
-  } catch (err) {
-    window.__shotError = String(err && err.message ? err.message : err);
+function render() {
+  const { ctx, vw, vh, scale } = G;
+  ctx.clearRect(0, 0, vw, vh);
+  ctx.fillStyle = '#4d7a38';
+  ctx.fillRect(0, 0, vw, vh);
+
+  drawWorld(G);
+  if (S.mode === 'playing') {
+    drawBeacon(G);
+    drawFareMarker(G);
   }
-} else {
-  display.showTitle();
-  const hasSave = state.cash !== 250 || state.missionsDone > 0 || state.kills > 0;
-  document.getElementById('btn-continue').style.display = hasSave ? 'inline-block' : 'none';
-  display.say(story.objectiveLabel());
+  drawTraffic(G);
+  drawCops(G);
+  drawCombat(G);
+  drawHero(G);
+
+  // Bullet tracers.
+  for (const t of G.tracers) {
+    const a = t.life / t.maxLife;
+    ctx.strokeStyle = `rgba(255, 233, 168, ${a.toFixed(2)})`;
+    ctx.lineWidth = Math.max(1, 0.7 * scale * 0.5);
+    ctx.beginPath();
+    ctx.moveTo((t.x1 - S.camera.x) * scale + vw / 2, (t.z1 - S.camera.z) * scale + vh / 2);
+    ctx.lineTo((t.x2 - S.camera.x) * scale + vw / 2, (t.z2 - S.camera.z) * scale + vh / 2);
+    ctx.stroke();
+  }
+  // Particles (smoke, sparks).
+  for (const e of G.effects) {
+    const a = e.life / e.maxLife;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = e.color;
+    ctx.beginPath();
+    ctx.arc((e.x - S.camera.x) * scale + vw / 2, (e.z - S.camera.z) * scale + vh / 2, e.size * scale * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    e.x += e.vx * 0.016;
+    e.z += e.vz * 0.016;
+  }
+  ctx.globalAlpha = 1;
+  drawFloaters(G);
+  drawLighting(G);
 }
-if (isShot) {
-  // Keep the HUD visible for the shot; the title overlay is only for start.
-  if (shotName !== 'start') display.showHud();
-}
-frame();
+
+requestAnimationFrame(frame);
+window.__game = G;

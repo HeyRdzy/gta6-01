@@ -1,145 +1,97 @@
-// Staged scenes for the four screenshots. Each pose puts the camera, Rio,
-// the cops and the mission into a composed frame at golden hour, then lets
-// the game render a few frames before the shot is taken.
-// Round 3 note: each pose must stay readable at a glance when shrunk to a contact sheet.
+// Solmar Heat — staged scenes for the four screenshots (?shot=...).
+// Written fresh for round 4. Each shot sets up a moment of the game, then
+// the loop runs normally so traffic, cops and the beacon stay alive.
+import { S } from './state.js';
+import { spawnEnemy } from './combat.js';
+import { spawnCop } from './cops.js';
 
-/** Pose one staged scene. `game` is the wired-up game from boot.js. */
+export function applyShot(G, name) {
+  G.shotName = name;
+  S.mode = 'playing';
+  S.missionActive = true;
+  G.display.hideTitle();
+  G.sound.ensure();
 
-/**
- * Pick the first camera candidate that sits in open space with a clear
- * sightline to the look point. The street grid is narrow, so a camera
- * parked against a warehouse wall would fill the frame with flat brown.
- */
-function pickCamera(game, look, candidates) {
-  const { world } = game;
-  for (const c of candidates) {
-    if (world.collides(c.pos.x, c.pos.z, 1.2)) continue;
-    let blocked = false;
-    for (let i = 1; i <= 6; i++) {
-      const t = i / 7;
-      const x = c.pos.x + (look.x - c.pos.x) * t;
-      const z = c.pos.z + (look.z - c.pos.z) * t;
-      if (world.collides(x, z, 0.8)) {
-        blocked = true;
-        break;
-      }
-    }
-    if (!blocked) return { pos: { ...c.pos }, look: { ...look }, orbit: false };
-  }
-  const first = candidates[0];
-  return { pos: { ...first.pos }, look: { ...look }, orbit: false };
-}
-export function applyShot(game, name) {
-  const { hero, state, story, combat, cops, display, traffic } = game;
-  state.dayT = 0.74; // golden hour for every shot
-  state.started = true;
-  state.paused = false;
-  display.showHud();
-
+  const P = S.player;
   if (name === 'start') {
-    // Title vista: Rio on the boulevard with downtown towers behind him.
-    hero.teleport(0, 90, Math.PI);
-    state.clearWanted();
-    combat.clearRivals();
-    display.showTitle();
-    game.shotCamera = {
-      pos: { x: -55, y: 48, z: 175 },
-      look: { x: 25, y: 8, z: -10 },
-      orbit: true,
-    };
-    return;
-  }
-
-  if (name === 'play') {
-    // Rio on foot at a crosswalk, glass HUD and minimap visible.
-    hero.teleport(0, 90, Math.PI);
-    if (hero.driving) hero.exitCar();
-    state.clearWanted();
-    combat.clearRivals();
-    game.shotCamera = {
-      pos: { x: 4, y: 3.4, z: 97.5 },
-      look: { x: -1, y: 1.5, z: 89 },
-      orbit: false,
-    };
-    return;
-  }
-
-  if (name === 'chase') {
-    // Rio driving through the city centre with a cruiser on his tail and
-    // two wanted stars. The centre's residential towers read well from
-    // every side; the dockyard's flat warehouse walls do not.
-    const car = traffic.nearestCar(0, 0, 500);
-    hero.teleport(car.mesh.position.x, car.mesh.position.z, 0);
-    if (!hero.driving) hero.enterCar();
-    hero.speed = 17;
-    state.wanted = 2;
-    state.wantedHeat = 1;
-    // Let the chase spawn, then pull one cruiser in close behind.
-    cops.update(2.5, 10);
-    if (cops.cruisers.length > 0) {
-      const c = cops.cruisers[0];
-      const hx = hero.car.mesh.position.x;
-      const hz = hero.car.mesh.position.z;
-      c.mesh.position.set(hx - Math.sin(hero.car.heading) * 9, 0, hz - Math.cos(hero.car.heading) * 9);
-      c.heading = hero.car.heading;
-      c.speed = 17;
+    // Wide golden-hour vista: downtown towers, the marina and the pier.
+    G.shotZoom = 0.75;
+    P.x = 60;
+    P.z = 0;
+    P.angle = Math.PI;
+    P.onFoot = true;
+    P.car = null;
+    S.camera.x = 20;
+    S.camera.z = -10;
+    S.tod = 0.7;
+    S.missionIndex = 0;
+    S.missionStep = 0;
+    G.display.setObjective('Solmar Heat — an open-world crime game');
+  } else if (name === 'play') {
+    // Rio on foot at a downtown crosswalk, traffic and neon behind him.
+    G.shotZoom = 1;
+    P.x = -30;
+    P.z = -30;
+    P.angle = -Math.PI / 2;
+    P.onFoot = true;
+    P.car = null;
+    S.camera.x = -30;
+    S.camera.z = -30;
+    S.tod = 0.78;
+    S.missionIndex = 0;
+    S.missionStep = 0;
+    G.display.setObjective('Sunset Courier — deliver the package to the pier');
+  } else if (name === 'chase') {
+    // Two wanted stars: cruisers riding Rio's bumper down the boulevard.
+    G.shotZoom = 1;
+    S.wanted = 2;
+    S.lastCrimeAt = S.time;
+    const car = G.traffic.cars.find((c) => !c.isPlayer && c.type === 'sedan');
+    if (car) {
+      car.x = -90;
+      car.z = 30;
+      car.angle = 0;
+      car.speed = 40;
+      car.isPlayer = true;
+      P.car = car;
+      P.onFoot = false;
+      P.x = car.x;
+      P.z = car.z;
+      P.angle = 0;
     }
-    // Camera sits behind and to the side of the car, looking forward past
-    // it, so both the stolen car and the cruiser on its tail are in the
-    // frame. Candidates are tried in order until one sits in open space
-    // with a clear sightline — a camera parked against a warehouse wall
-    // would fill the frame with flat brown.
-    const fx = Math.sin(hero.car.heading);
-    const fz = Math.cos(hero.car.heading);
-    const rx = Math.cos(hero.car.heading);
-    const rz = -Math.sin(hero.car.heading);
-    const look = { x: hero.x + fx * 8, y: 1.5, z: hero.z + fz * 8 };
-    game.shotCamera = pickCamera(game, look, [
-      { pos: { x: hero.x - fx * 12 + rx * 3, y: 7.5, z: hero.z - fz * 12 + rz * 3 } },
-      { pos: { x: hero.x - fx * 12 - rx * 3, y: 7.5, z: hero.z - fz * 12 - rz * 3 } },
-      { pos: { x: hero.x - fx * 9 + rx * 3, y: 7.5, z: hero.z - fz * 9 + rz * 3 } },
-      { pos: { x: hero.x - fx * 9 - rx * 3, y: 7.5, z: hero.z - fz * 9 - rz * 3 } },
-      { pos: { x: hero.x - fx * 7, y: 7.5, z: hero.z - fz * 7 } },
-    ]);
-    display.say(story.objectiveLabel());
-    return;
+    const c1 = spawnCop(G, -122, 30);
+    const c2 = spawnCop(G, -108, 40);
+    c1.angle = 0;
+    c1.speed = 55;
+    c2.angle = 0;
+    c2.speed = 50;
+    // Rio keeps his foot down so the chase stays a chase.
+    G.input.keys.add('KeyW');
+    S.camera.x = -90;
+    S.camera.z = 30;
+    S.tod = 0.7;
+    S.missionIndex = 1;
+    S.missionStep = 1;
+    G.display.setObjective('Getaway Driver — reach the safehouse');
+  } else if (name === 'mission') {
+    // Dockyard Standoff: Rio holds the yard, the gold beacon on the crate.
+    G.shotZoom = 1;
+    P.x = 108;
+    P.z = 96;
+    P.angle = Math.PI / 4;
+    P.onFoot = true;
+    P.car = null;
+    S.camera.x = 108;
+    S.camera.z = 96;
+    S.tod = 0.7;
+    S.missionIndex = 3;
+    S.missionStep = 1;
+    const c = G.world.landmarks.dockyard;
+    G.combat.enemies = [];
+    spawnEnemy(G, c.x - 14, c.z - 10);
+    spawnEnemy(G, c.x + 12, c.z - 14);
+    spawnEnemy(G, c.x + 16, c.z + 10);
+    spawnEnemy(G, c.x - 8, c.z + 16);
+    G.display.setObjective('Dockyard Standoff — defeat the dock crew (0/4)');
   }
-
-  if (name === 'mission') {
-    // Dockyard Standoff, shot from a high three-quarter angle south-east
-    // of the yard: the camera looks over the container row at Rio and the
-    // rival line, with the gold beacon, the yard and the warehouses all
-    // in the frame.
-    state.missionsDone = 3;
-    state.missions = [true, true, true, false, false];
-    if (hero.driving) hero.exitCar();
-    // Rio stands in the near foreground, just south of the container row
-    // with his back to the camera, facing the yard — big in the frame,
-    // with the beacon and the rival line beyond him.
-    hero.teleport(134, 154, -1.85);
-    state.clearWanted();
-    combat.clearRivals();
-    story.startNext(display);
-    // Rivals hold a line across the yard, all in view.
-    const spots = [
-      [126, 144],
-      [114, 146],
-      [128, 154],
-      [116, 156],
-    ];
-    combat.rivals.forEach((r, i) => {
-      const s = spots[i % spots.length];
-      r.x = s[0];
-      r.z = s[1];
-      r.mesh.position.set(s[0], 0, s[1]);
-    });
-    game.shotCamera = pickCamera(game, { x: 118, y: 1.5, z: 153 }, [
-      { pos: { x: 146, y: 12, z: 156 } },
-      { pos: { x: 158, y: 18, z: 158 } },
-      { pos: { x: 140, y: 14, z: 168 } },
-    ]);
-    return;
-  }
-
-  throw new Error(`unknown shot: ${name}`);
 }

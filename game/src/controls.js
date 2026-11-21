@@ -1,201 +1,64 @@
-// Keyboard and mouse input: WASD + arrows, Shift run, Space jump, E
-// interact (enter/exit car, start a job at the beacon), R reload, M mute,
-// Esc pause. Mouse look uses pointer lock with a drag fallback, and a click
-// fires Rio's pistol.
-
-import { clamp } from './util.js';
-
-export function createControls(game) {
-  const { canvas, hero, combat, story, state, display, sound, camera } = game;
-  const input = { forward: false, back: false, left: false, right: false, run: false, jump: false };
-  let camYaw = 0;
-  let camPitch = 0.32;
-  let pointerLocked = false;
-  let dragging = false;
-  let dragMoved = 0;
-  let lastX = 0;
-  let lastY = 0;
-
-  function interact() {
-    if (!state.started || state.paused) return;
-    if (hero.driving) {
-      hero.exitCar();
-      return;
-    }
-    // Start the next job when Rio stands at the gold beacon.
-    if (!story.active) {
-      const wp = story.objectivePoint();
-      if (wp && Math.hypot(hero.x - wp.x, hero.z - wp.z) < 5) {
-        story.startNext(display);
-        return;
-      }
-    }
-    hero.enterCar();
-  }
-
-  function togglePause() {
-    if (!state.started) return;
-    state.paused = !state.paused;
-    if (state.paused) {
-      display.showPause();
-      if (document.pointerLockElement) document.exitPointerLock();
-    } else {
-      display.hidePause();
-    }
-  }
-
-  function toggleMute() {
-    sound.ensure();
-    sound.setMuted(!state.muted);
-    display.toast(state.muted ? 'Sound muted' : 'Sound on');
-  }
+// Solmar Heat — keyboard and mouse input. Written fresh for round 4.
+// Top-down camera is north-up, so WASD maps straight onto the map.
+export function createControls(G) {
+  const input = {
+    keys: new Set(),
+    mouse: { x: 0, y: 0, wx: 0, wz: 0, down: false, clicked: false },
+    locked: false,
+  };
+  const canvas = G.canvas;
 
   window.addEventListener('keydown', (e) => {
-    if (e.repeat) {
-      if (e.code === 'Space') e.preventDefault();
-      return;
-    }
-    switch (e.code) {
-      case 'KeyW':
-      case 'ArrowUp':
-        input.forward = true;
-        break;
-      case 'KeyS':
-      case 'ArrowDown':
-        input.back = true;
-        break;
-      case 'KeyA':
-      case 'ArrowLeft':
-        input.left = true;
-        break;
-      case 'KeyD':
-      case 'ArrowRight':
-        input.right = true;
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight':
-        input.run = true;
-        break;
-      case 'Space':
-        input.jump = true;
-        e.preventDefault();
-        break;
-      case 'KeyE':
-        interact();
-        break;
-      case 'KeyR':
-        combat.reload();
-        break;
-      case 'KeyM':
-        toggleMute();
-        break;
-      case 'Escape':
-        togglePause();
-        break;
-      default:
-        break;
-    }
+    if (e.code === 'Space') e.preventDefault();
+    input.keys.add(e.code);
+    if (e.code === 'KeyM') G.S.muted = !G.S.muted;
   });
+  window.addEventListener('keyup', (e) => input.keys.delete(e.code));
+  window.addEventListener('blur', () => input.keys.clear());
 
-  window.addEventListener('keyup', (e) => {
-    switch (e.code) {
-      case 'KeyW':
-      case 'ArrowUp':
-        input.forward = false;
-        break;
-      case 'KeyS':
-      case 'ArrowDown':
-        input.back = false;
-        break;
-      case 'KeyA':
-      case 'ArrowLeft':
-        input.left = false;
-        break;
-      case 'KeyD':
-      case 'ArrowRight':
-        input.right = false;
-        break;
-      case 'ShiftLeft':
-      case 'ShiftRight':
-        input.run = false;
-        break;
-      case 'Space':
-        input.jump = false;
-        break;
-      default:
-        break;
-    }
+  canvas.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    input.mouse.x = e.clientX - r.left;
+    input.mouse.y = e.clientY - r.top;
   });
-
-  canvas.addEventListener('click', () => {
-    if (!state.started || state.paused) return;
-    if (!pointerLocked) {
-      try {
-        const p = canvas.requestPointerLock();
-        if (p && p.catch) p.catch(() => {});
-      } catch (err) {
-        // Pointer lock is unavailable (headless); drag look still works.
-      }
-    }
-  });
-
-  document.addEventListener('pointerlockchange', () => {
-    pointerLocked = document.pointerLockElement === canvas;
-    if (!pointerLocked && state.started && !state.paused) {
-      // Esc in pointer lock exits the lock: treat it as a pause request.
-      togglePause();
-    }
-  });
-
-  window.addEventListener('mousemove', (e) => {
-    if (pointerLocked) {
-      camYaw -= e.movementX * 0.0028;
-      camPitch = clamp(camPitch + e.movementY * 0.0022, 0.06, 0.85);
-    } else if (dragging) {
-      const dx = e.clientX - lastX;
-      const dy = e.clientY - lastY;
-      dragMoved += Math.abs(dx) + Math.abs(dy);
-      camYaw -= dx * 0.004;
-      camPitch = clamp(camPitch + dy * 0.003, 0.06, 0.85);
-      lastX = e.clientX;
-      lastY = e.clientY;
-    }
-  });
-
   canvas.addEventListener('mousedown', (e) => {
-    if (!state.started || state.paused) return;
-    if (pointerLocked) {
-      combat.shoot(camera);
-      return;
+    if (e.button === 0) {
+      input.mouse.down = true;
+      input.mouse.clicked = true;
     }
-    dragging = true;
-    dragMoved = 0;
-    lastX = e.clientX;
-    lastY = e.clientY;
   });
-
-  window.addEventListener('mouseup', () => {
-    if (dragging && dragMoved < 6 && state.started && !state.paused) {
-      // A short click without a drag is a shot.
-      combat.shoot(camera);
-    }
-    dragging = false;
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) input.mouse.down = false;
   });
-
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  return {
-    input,
-    get camYaw() {
-      return camYaw;
-    },
-    get camPitch() {
-      return camPitch;
-    },
-    setCamYaw(v) {
-      camYaw = v;
-    },
-    togglePause,
-    toggleMute,
+  // Mouse world position, refreshed every frame by boot (camera moves).
+  input.updateMouseWorld = () => {
+    const { vw, vh, scale } = G;
+    input.mouse.wx = (input.mouse.x - vw / 2) / scale + G.S.camera.x;
+    input.mouse.wz = (input.mouse.y - vh / 2) / scale + G.S.camera.z;
   };
+
+  // WASD as a world-space vector (x right, z down).
+  input.moveVector = () => {
+    let x = 0;
+    let z = 0;
+    if (input.keys.has('KeyW') || input.keys.has('ArrowUp')) z -= 1;
+    if (input.keys.has('KeyS') || input.keys.has('ArrowDown')) z += 1;
+    if (input.keys.has('KeyA') || input.keys.has('ArrowLeft')) x -= 1;
+    if (input.keys.has('KeyD') || input.keys.has('ArrowRight')) x += 1;
+    if (x !== 0 && z !== 0) {
+      x *= Math.SQRT1_2;
+      z *= Math.SQRT1_2;
+    }
+    return { x, z };
+  };
+
+  input.pressed = (code) => {
+    if (!input.keys.has(code)) return false;
+    input.keys.delete(code);
+    return true;
+  };
+
+  return input;
 }

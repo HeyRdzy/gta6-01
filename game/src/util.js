@@ -1,90 +1,83 @@
-// Small math and random helpers shared by every Solmar Heat module.
-// No game logic lives here, only pure functions so the modules stay testable.
-// Round 3 note: every helper here is deterministic, which is why the city seed reproduces exactly.
+// Solmar Heat — small math and geometry helpers. Written fresh for round 4.
+export const TAU = Math.PI * 2;
 
 export function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-export function clamp01(v) {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 export function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-/** Frame-rate independent smoothing: damp(current, target, rate, dt). */
-export function damp(current, target, rate, dt) {
-  const k = 1 - Math.exp(-rate * dt);
-  return current + (target - current) * k;
+export function rand(a = 1, b) {
+  if (b === undefined) return Math.random() * a;
+  return a + Math.random() * (b - a);
 }
 
-export function smoothstep(a, b, x) {
-  const t = clamp01((x - a) / (b - a));
-  return t * t * (3 - 2 * t);
+export function randInt(a, b) {
+  return Math.floor(rand(a, b + 1));
 }
 
-export function smoothstepNum(a, b, x) {
-  return smoothstep(a, b, x);
+export function choice(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
-/** Shortest signed difference between two angles, in radians. */
+export function dist2(ax, az, bx, bz) {
+  const dx = ax - bx;
+  const dz = az - bz;
+  return dx * dx + dz * dz;
+}
+
+export function dist(ax, az, bx, bz) {
+  return Math.hypot(ax - bx, az - bz);
+}
+
+// Shortest signed difference between two angles, in (-PI, PI].
 export function angleDiff(a, b) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
+  let d = (a - b) % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d <= -Math.PI) d += TAU;
   return d;
 }
 
 export function angleLerp(a, b, t) {
-  return a + angleDiff(a, b) * clamp01(t);
+  return a + angleDiff(b, a) * t;
 }
 
-/** Deterministic PRNG (mulberry32) so the city layout is stable for a seed. */
-export function mulberry32(seed) {
-  let s = seed >>> 0;
-  return function next() {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+// Push a circle (x, z, r) out of an axis-aligned box {x, z, w, d} (x/z are
+// the box centre). Returns {x, z} corrected, or null when there is no overlap.
+export function circleVsAABB(x, z, r, box) {
+  const hx = box.w / 2;
+  const hz = box.d / 2;
+  const cx = clamp(x, box.x - hx, box.x + hx);
+  const cz = clamp(z, box.z - hz, box.z + hz);
+  const dx = x - cx;
+  const dz = z - cz;
+  const d2 = dx * dx + dz * dz;
+  if (d2 >= r * r) return null;
+  if (d2 > 0.0001) {
+    const d = Math.sqrt(d2);
+    return { x: cx + (dx / d) * r, z: cz + (dz / d) * r };
+  }
+  // Centre is inside the box: push out along the smallest penetration axis.
+  const px = hx + r - Math.abs(x - box.x);
+  const pz = hz + r - Math.abs(z - box.z);
+  if (px < pz) return { x: box.x + (x >= box.x ? hx + r : -hx - r), z };
+  return { x, z: box.z + (z >= box.z ? hz + r : -hz - r) };
 }
 
-/** A stable 0..1 hash of two integers, for per-block variation without state. */
-export function hash2(x, z, seed) {
-  let h = (seed ^ Math.imul(x + 374761393, 668265263) ^ Math.imul(z + 2246822519, 3266489917)) >>> 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  h = (h ^ (h >>> 16)) >>> 0; // keep unsigned: a signed XOR can go negative
-  return h / 4294967296;
+export function pointInAABB(x, z, box) {
+  return Math.abs(x - box.x) <= box.w / 2 && Math.abs(z - box.z) <= box.d / 2;
 }
 
-export function pick(rng, list) {
-  return list[Math.floor(rng() * list.length) % list.length];
-}
-
-export function range(rng, lo, hi) {
-  return lo + rng() * (hi - lo);
-}
-
-export function rangeInt(rng, lo, hi) {
-  return Math.floor(range(rng, lo, hi + 1));
-}
-
-/** Make a canvas, run a painter on its 2d context, return the canvas. */
-export function makeCanvas(w, h, paint) {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  paint(c.getContext('2d'), w, h);
-  return c;
-}
-
-/** Distance on the ground plane between two points. */
-export function dist2d(ax, az, bx, bz) {
-  const dx = ax - bx;
-  const dz = az - bz;
-  return Math.sqrt(dx * dx + dz * dz);
+// Distance from point (x, z) to segment (ax, az)-(bx, bz).
+export function pointSegDist(x, z, ax, az, bx, bz) {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const len2 = dx * dx + dz * dz;
+  let t = len2 === 0 ? 0 : ((x - ax) * dx + (z - az) * dz) / len2;
+  t = clamp(t, 0, 1);
+  const px = ax + dx * t;
+  const pz = az + dz * t;
+  return Math.hypot(x - px, z - pz);
 }

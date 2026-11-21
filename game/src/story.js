@@ -1,260 +1,322 @@
-// Mara Voss's five jobs, the gold beacon that marks them, taxi fares and
-// stunt ramps. Missions run in order; each step is a goto, a fight or an
-// escape, and finishing one pays out and unlocks the next.
-// Round 3 note: missions are data first — the defs above are the whole story, the code just runs them.
+// Solmar Heat — five story jobs from Mara Voss, $3,400 on the table.
+// Written fresh for round 4. Missions are data: each step has a target, a
+// completion check, and hooks for when the step starts and ends.
+import { CFG } from './config.js';
+import { dist, clamp } from './util.js';
+import { S, addCash, saveGame } from './state.js';
+import { spawnEnemy } from './combat.js';
 
-import * as THREE from 'three';
-import { glowTexture, stdMat, unitBox, unitCylinder } from './visuals.js';
-import { clamp, dist2d, range } from './util.js';
-
-export const MISSION_DEFS = [
+const MISSIONS = [
   {
     name: 'Sunset Courier',
-    payout: 300,
-    intro: 'Mara: take this package to the marina. No detours, no questions.',
-    start: { x: 30, z: 60 },
-    steps: [{ type: 'goto', x: 150, z: 30, r: 6, label: 'Deliver the package to the marina' }],
+    pay: 300,
+    intro: 'Mara: Take this package to the pier boat. Do not keep the boat waiting.',
+    steps: [
+      {
+        text: 'Deliver the package to the pier',
+        target: (G) => G.world.landmarks.marina,
+        done: (G) => near(G, G.world.landmarks.marina, 12),
+      },
+    ],
   },
   {
     name: 'Getaway Driver',
-    payout: 500,
-    intro: 'Mara: the crew is hot. Shake the cops and reach the north garage.',
-    start: { x: -30, z: 30 },
-    steps: [{ type: 'goto', x: -120, z: -120, r: 6, label: 'Lose the cops, reach the north garage' }],
-    wanted: 2,
+    pay: 500,
+    intro: 'Mara: Pick up my associate outside the bank. The PD will be on you — get him to the safehouse.',
+    steps: [
+      {
+        text: 'Pick up the associate at the bank',
+        target: (G) => G.world.landmarks.bank,
+        done: (G) => near(G, G.world.landmarks.bank, 12),
+        onDone: (G) => {
+          S.wanted = Math.max(S.wanted, 2);
+          G.display.toast('Cops on you! Lose them at the safehouse.');
+        },
+      },
+      {
+        text: 'Reach the safehouse',
+        target: (G) => G.world.landmarks.safehouse,
+        done: (G) => near(G, G.world.landmarks.safehouse, 12),
+      },
+    ],
   },
   {
     name: 'Package Run',
-    payout: 400,
-    intro: 'Mara: two drops tonight. Dockyard gate first, then back to me.',
-    start: { x: 60, z: -60 },
+    pay: 600,
+    intro: 'Mara: Three packages, 150 seconds. Park, dockyard, beach — move!',
     steps: [
-      { type: 'goto', x: 120, z: 120, r: 6, label: 'Drop the package at the dockyard gate' },
-      { type: 'goto', x: 60, z: -60, r: 6, label: 'Get back to Mara' },
+      {
+        text: 'Pick up package 1/3 — the park',
+        target: (G) => G.world.landmarks.park,
+        done: (G) => near(G, G.world.landmarks.park, 12),
+      },
+      {
+        text: 'Pick up package 2/3 — the dockyard',
+        target: (G) => G.world.landmarks.dockyard,
+        done: (G) => near(G, G.world.landmarks.dockyard, 12),
+      },
+      {
+        text: 'Pick up package 3/3 — the beach',
+        target: (G) => ({ x: 216, z: -120 }),
+        done: (G) => near(G, { x: 216, z: -120 }, 12),
+      },
     ],
   },
   {
     name: 'Dockyard Standoff',
-    payout: 700,
-    intro: 'Mara: the dock crew took our crate. Take it back, all of it.',
-    start: { x: 120, z: 120 },
+    pay: 800,
+    intro: 'Mara: The dock crew took my crate. Take it back — they will shoot.',
     steps: [
-      { type: 'kill', count: 4, x: 120, z: 150, label: 'Clear the dockyard crew (4 left)' },
-      { type: 'goto', x: 120, z: 90, r: 6, label: 'Grab the crate and leave the yard' },
+      {
+        text: 'Reach the dockyard',
+        target: (G) => G.world.landmarks.dockyard,
+        done: (G) => near(G, G.world.landmarks.dockyard, 14),
+        onDone: (G) => {
+          const c = G.world.landmarks.dockyard;
+          spawnEnemy(G, c.x - 14, c.z - 10);
+          spawnEnemy(G, c.x + 12, c.z - 14);
+          spawnEnemy(G, c.x - 8, c.z + 14);
+          spawnEnemy(G, c.x + 16, c.z + 10);
+          G.display.toast('Dock crew! Take them down.');
+        },
+      },
+      {
+        text: 'Defeat the dock crew (0/4)',
+        target: (G) => G.world.landmarks.dockyard,
+        done: (G) => G.combat.enemies.length > 0 && G.combat.enemies.every((e) => e.dead),
+      },
+      {
+        text: 'Grab the crate',
+        target: (G) => ({ x: 120, z: 108 }),
+        done: (G) => near(G, { x: 120, z: 108 }, 10),
+      },
     ],
   },
   {
     name: 'The Solmar Heist',
-    payout: 1500,
-    intro: 'Mara: tonight we take the vault. Get in, hold it, get out to the pier.',
-    start: { x: -60, z: -60 },
+    pay: 1200,
+    intro: 'Mara: The big one. Crack the bank vault, then run for the pier boat.',
     steps: [
-      { type: 'goto', x: 135, z: 150, r: 6, label: 'Reach the dockyard vault' },
-      { type: 'kill', count: 3, x: 135, z: 150, label: 'Hold the vault (3 left)' },
-      { type: 'goto', x: 165, z: 0, r: 7, label: 'Escape to Pier 9' },
+      {
+        text: 'Reach the bank',
+        target: (G) => G.world.landmarks.bank,
+        done: (G) => near(G, G.world.landmarks.bank, 12),
+      },
+      {
+        text: 'Crack the vault — stay close (0%)',
+        target: (G) => G.world.landmarks.bank,
+        done: (G) => (G.story.crackT || 0) >= 10,
+      },
+      {
+        text: 'Escape to the pier boat!',
+        target: (G) => G.world.landmarks.marina,
+        done: (G) => near(G, G.world.landmarks.marina, 12),
+        onEnter: (G) => {
+          S.wanted = 4;
+          G.display.toast('4 stars! Run for the boat!');
+        },
+      },
     ],
   },
 ];
 
-export function createStory(scene, hero, combat, state, display, sound) {
-  // Slim gold beacon: a short column, a ground ring and a halo sprite.
-  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffc21a, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  const beacon = new THREE.Mesh(unitCylinder(16), beaconMat);
-  beacon.scale.set(1.05, 26, 1.05);
-  beacon.position.set(30, 13, 60);
-  scene.add(beacon);
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffc21a, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(1.6, 2.2, 24), ringMat);
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.set(30, 0.06, 60);
-  scene.add(ring);
-  const halo = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffc21a, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending })
-  );
-  halo.scale.set(6, 6, 1);
-  halo.position.set(30, 2, 60);
-  scene.add(halo);
+function near(G, pt, r) {
+  return dist(S.player.x, S.player.z, pt.x, pt.z) < r;
+}
 
-  // Taxi fare marker.
-  const fareHalo = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: glowTexture(), color: 0x51ff7a, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending })
-  );
-  fareHalo.scale.set(5, 5, 1);
-  scene.add(fareHalo);
-  let fare = null;
-  let fareCooldown = 0;
+export function createStory(G) {
+  const story = {
+    crackT: 0,
+    startDelay: 1.2,
+    allDone: false,
+    wasted: () => wasted(G),
+    busted: () => busted(G),
+    respawn: () => respawn(G),
+  };
+  return story;
+}
 
-  // Stunt ramps: chevron wedges that pay for air.
-  const ramps = [];
-  const rampMat = stdMat('ramp', () => new THREE.MeshStandardMaterial({ color: 0xd8a23a, roughness: 0.7 }));
-  const chevMat = stdMat('chev', () => new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 }));
-  for (const [rx, rz, ry] of [[-45, 0, 0], [45, -120, Math.PI / 2], [105, 30, -Math.PI / 2]]) {
-    const ramp = new THREE.Group();
-    const wedge = new THREE.Mesh(unitBox(), rampMat);
-    wedge.scale.set(6, 1.2, 4);
-    wedge.position.y = 0.6;
-    wedge.rotation.z = 0.28;
-    wedge.castShadow = true;
-    ramp.add(wedge);
-    const chev = new THREE.Mesh(unitBox(), chevMat);
-    chev.scale.set(0.5, 0.5, 4.1);
-    chev.position.set(-2.2, 1.35, 0);
-    chev.rotation.z = 0.28;
-    ramp.add(chev);
-    ramp.position.set(rx, 0, rz);
-    ramp.rotation.y = ry;
-    scene.add(ramp);
-    ramps.push({ x: rx, z: rz, cooldown: 0 });
+export function currentMission() {
+  return MISSIONS[S.missionIndex] || null;
+}
+
+export function currentStep(G) {
+  const m = currentMission();
+  if (!m) return null;
+  return m.steps[S.missionStep] || null;
+}
+
+export function currentTarget(G) {
+  const step = currentStep(G);
+  if (!step) return null;
+  return step.target(G);
+}
+
+function startMission(G, i) {
+  const m = MISSIONS[i];
+  if (!m) return;
+  S.missionIndex = i;
+  S.missionStep = 0;
+  S.missionTimer = i === 2 ? 150 : 0;
+  S.missionActive = true;
+  G.story.crackT = 0;
+  G.display.setObjective(`${m.name} — ${m.steps[0].text}`);
+  G.display.toast(`JOB: ${m.name} — $${m.pay}`);
+  G.display.phone(m.intro);
+}
+
+function completeMission(G) {
+  const m = currentMission();
+  addCash(m.pay);
+  S.stats.missionsDone += 1;
+  G.display.toast(`${m.name} complete! +$${m.pay}`);
+  G.display.floater(S.player.x, S.player.z, `+$${m.pay}`, '#ffd319');
+  G.sound.chime();
+  saveGame();
+  S.missionActive = false;
+  if (S.missionIndex + 1 >= MISSIONS.length) {
+    G.story.allDone = true;
+    G.display.setObjective('All jobs done — free roam Solmar Bay!');
+    G.display.phone('Mara: $3,400. You are square with me, Rio. The city is yours.');
+  } else {
+    S.missionIndex += 1;
+    G.story.startDelay = 2.5;
+  }
+}
+
+export function updateStory(G, dt) {
+  if (S.mode !== 'playing') return;
+  if (G.story.allDone) return;
+
+  if (!S.missionActive) {
+    G.story.startDelay -= dt;
+    if (G.story.startDelay <= 0) startMission(G, S.missionIndex);
+    return;
   }
 
-  const story = {
-    active: null,
-    beacon,
-    ring,
-    halo,
+  const m = currentMission();
+  if (!m) return;
+  const step = currentStep(G);
+  if (!step) {
+    completeMission(G);
+    return;
+  }
 
-    nextDef() {
-      return MISSION_DEFS[state.missionsDone] ?? null;
-    },
+  // Package Run timer.
+  if (S.missionIndex === 2) {
+    S.missionTimer -= dt;
+    if (S.missionTimer <= 0) {
+      G.display.toast('Too slow! Mara gives you another shot.');
+      G.display.phone('Mara: The packages moved on. Start the run again.');
+      startMission(G, 2);
+      return;
+    }
+  }
 
-    startNext(displayApi) {
-      const def = story.nextDef();
-      if (!def) {
-        displayApi.toast('All jobs done — Solmar Bay is yours, free roam');
-        return false;
-      }
-      story.active = { def, stepIdx: 0, killsAtStart: state.kills };
-      displayApi.say(def.intro);
-      displayApi.toast(`Job started: ${def.name} — $${def.payout}`);
-      sound.chime();
-      if (def.wanted) state.addWanted(def.wanted);
-      story.placeBeacon();
-      const step = def.steps[0];
-      if (step.type === 'kill') combat.spawnRivals(step.x, step.z, step.count);
-      return true;
-    },
+  // Vault cracking: hold near the bank to fill the progress.
+  if (S.missionIndex === 4 && S.missionStep === 1) {
+    if (near(G, G.world.landmarks.bank, 12)) {
+      G.story.crackT += dt;
+    } else {
+      G.story.crackT = Math.max(0, G.story.crackT - dt * 0.5);
+    }
+    step.text = `Crack the vault — stay close (${Math.floor(clamp(G.story.crackT / 10, 0, 1) * 100)}%)`;
+    G.display.setObjective(`${m.name} — ${step.text}`);
+  }
 
-    placeBeacon() {
-      const target = story.objectivePoint();
-      if (!target) {
-        beacon.visible = false;
-        ring.visible = false;
-        halo.visible = false;
-        return;
-      }
-      const step = story.active ? story.active.def.steps[story.active.stepIdx] : null;
-      const isKill = step && step.type === 'kill';
-      beacon.visible = !isKill;
-      ring.visible = true;
-      halo.visible = true;
-      beacon.position.set(target.x, 13, target.z);
-      ring.position.set(target.x, 0.06, target.z);
-      halo.position.set(target.x, 2, target.z);
-    },
+  // Defeat-the-crew counter.
+  if (S.missionIndex === 3 && S.missionStep === 1) {
+    const left = G.combat.enemies.filter((e) => !e.dead).length;
+    step.text = `Defeat the dock crew (${4 - left}/4)`;
+    G.display.setObjective(`${m.name} — ${step.text}`);
+  }
 
-    objectivePoint() {
-      if (story.active) {
-        const step = story.active.def.steps[story.active.stepIdx];
-        return { x: step.x, z: step.z };
-      }
-      const def = story.nextDef();
-      return def ? { x: def.start.x, z: def.start.z } : null;
-    },
+  if (step.done(G)) {
+    if (step.onDone) step.onDone(G);
+    S.missionStep += 1;
+    G.story.crackT = 0;
+    const next = currentStep(G);
+    if (next) {
+      if (next.onEnter) next.onEnter(G);
+      G.display.setObjective(`${m.name} — ${next.text}`);
+    } else {
+      completeMission(G);
+    }
+  }
+}
 
-    objectiveLabel() {
-      if (story.active) {
-        const step = story.active.def.steps[story.active.stepIdx];
-        if (step.type === 'kill') {
-          const left = step.count - (state.kills - story.active.killsAtStart);
-          return `${step.label.split('(')[0].trim()} (${Math.max(0, left)} left)`;
-        }
-        return step.label;
-      }
-      const def = story.nextDef();
-      return def ? `Next job: ${def.name} — $${def.payout} (walk to the gold beacon)` : 'All jobs done — free roam';
-    },
+// Gold beacon at the current waypoint.
+export function drawBeacon(G) {
+  const target = currentTarget(G);
+  if (!target || !S.missionActive || S.mode !== 'playing') return;
+  const { ctx, scale } = G;
+  const p = { x: (target.x - S.camera.x) * scale + G.vw / 2, y: (target.z - S.camera.z) * scale + G.vh / 2 };
+  const pulse = 0.6 + 0.4 * Math.sin(S.time * 4);
+  // Beam.
+  const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 26 * scale * 0.5 * pulse);
+  grad.addColorStop(0, 'rgba(255, 211, 25, 0.5)');
+  grad.addColorStop(1, 'rgba(255, 211, 25, 0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 26 * scale * 0.5 * pulse, 0, Math.PI * 2);
+  ctx.fill();
+  // Ring.
+  ctx.strokeStyle = '#ffd319';
+  ctx.lineWidth = Math.max(1.5, 0.8 * scale * 0.5);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 9 * scale * 0.5 * (1 + 0.12 * Math.sin(S.time * 4)), 0, Math.PI * 2);
+  ctx.stroke();
+  // Distance label.
+  const d = Math.round(dist(S.player.x, S.player.z, target.x, target.z));
+  ctx.fillStyle = '#ffd319';
+  ctx.font = `bold ${Math.max(11, 3 * scale * 0.5)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`${d}m`, p.x, p.y - 12 * scale * 0.5);
+}
 
-    update(dt) {
-      // Beacon idle motion.
-      const t = performance.now() / 1000;
-      ring.scale.setScalar(1 + Math.sin(t * 2.4) * 0.12);
-      halo.material.opacity = 0.45 + Math.sin(t * 2.4) * 0.18;
+// Fare marker (green) when a taxi fare is active.
+export function drawFareMarker(G) {
+  if (!S.fare) return;
+  const { ctx, scale } = G;
+  const p = { x: (S.fare.destX - S.camera.x) * scale + G.vw / 2, y: (S.fare.destZ - S.camera.z) * scale + G.vh / 2 };
+  ctx.strokeStyle = '#7cff4f';
+  ctx.lineWidth = Math.max(1.5, 0.8 * scale * 0.5);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 8 * scale * 0.5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = '#7cff4f';
+  ctx.font = `bold ${Math.max(11, 3 * scale * 0.5)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`$${S.fare.amount}`, p.x, p.y - 11 * scale * 0.5);
+}
 
-      if (story.active) {
-        const step = story.active.def.steps[story.active.stepIdx];
-        let done = false;
-        if (step.type === 'goto') {
-          done = dist2d(hero.x, hero.z, step.x, step.z) < step.r;
-        } else if (step.type === 'kill') {
-          done = state.kills - story.active.killsAtStart >= step.count;
-        }
-        if (done) {
-          story.active.stepIdx++;
-          if (story.active.stepIdx >= story.active.def.steps.length) {
-            const def = story.active.def;
-            state.addCash(def.payout);
-            state.missions[def === MISSION_DEFS[0] ? 0 : MISSION_DEFS.indexOf(def)] = true;
-            state.missionsDone++;
-            state.save();
-            display.toast(`Job complete: ${def.name} — +$${def.payout}`);
-            sound.chime();
-            combat.clearRivals();
-            story.active = null;
-            story.placeBeacon();
-          } else {
-            const next = story.active.def.steps[story.active.stepIdx];
-            display.say(next.label);
-            if (next.type === 'kill') {
-              story.active.killsAtStart = state.kills;
-              combat.spawnRivals(next.x, next.z, next.count);
-            }
-            story.placeBeacon();
-          }
-        }
-      }
+// The player was wasted (health 0) or busted (caught on foot).
+export function wasted(G) {
+  if (S.mode !== 'playing') return;
+  S.mode = 'wasted';
+  G.display.showEnd('WASTED', 'The Solmar PD scrapes you off the boulevard. Hospital fee: 10% of your cash.');
+}
 
-      // Taxi fares.
-      fareCooldown -= dt;
-      if (hero.driving && hero.car && hero.car.taxi) {
-        if (!fare && fareCooldown <= 0) {
-          const a = Math.random() * Math.PI * 2;
-          const d = 45 + Math.random() * 40;
-          fare = {
-            x: clamp(hero.x + Math.sin(a) * d, -170, 170),
-            z: clamp(hero.z + Math.cos(a) * d, -170, 170),
-          };
-          fareHalo.position.set(fare.x, 2, fare.z);
-          fareHalo.material.opacity = 0.8;
-          display.toast('New fare — drop them at the green marker');
-        }
-        if (fare && dist2d(hero.x, hero.z, fare.x, fare.z) < 6) {
-          const pay = 20 + Math.floor(Math.random() * 21);
-          state.addCash(pay);
-          state.fares++;
-          display.toast(`Fare paid +$${pay}`);
-          sound.chime();
-          fare = null;
-          fareCooldown = 4;
-          fareHalo.material.opacity = 0;
-        }
-      } else if (fare) {
-        fare = null;
-        fareHalo.material.opacity = 0;
-      }
+export function busted(G) {
+  if (S.mode !== 'playing') return;
+  S.mode = 'busted';
+  S.cash = Math.max(0, S.cash - CFG.BUST_FINE);
+  G.display.showEnd('BUSTED', `The PD books you. Fine: $${CFG.BUST_FINE}.`);
+}
 
-      // Stunt ramps.
-      for (const r of ramps) {
-        r.cooldown -= dt;
-        if (hero.driving && r.cooldown <= 0 && dist2d(hero.x, hero.z, r.x, r.z) < 4.5 && Math.abs(hero.speed) > 15) {
-          r.cooldown = 8;
-          state.addCash(50);
-          display.toast('STUNT +$50');
-          sound.chime();
-        }
-      }
-    },
-  };
-
-  story.placeBeacon();
-  return story;
+export function respawn(G) {
+  S.health = 100;
+  S.wanted = 0;
+  if (S.mode === 'wasted') S.cash = Math.round(S.cash * (1 - CFG.HOSPITAL_FEE_FRAC));
+  S.player.x = G.world.landmarks.hospital.x;
+  S.player.z = G.world.landmarks.hospital.z + 20;
+  S.player.onFoot = true;
+  S.player.car = null;
+  S.player.angle = Math.PI / 2;
+  S.camera.x = S.player.x;
+  S.camera.z = S.player.z;
+  G.combat.enemies = [];
+  S.mode = 'playing';
+  G.display.hideEnd();
+  G.display.toast('Back on the streets. Mara is waiting.');
 }
